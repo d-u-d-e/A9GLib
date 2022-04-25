@@ -108,15 +108,18 @@ private:
     enum
     {
         AT_COMMAND_IDLE,
-        AT_RECEIVING_RESPONSE
+        AT_RECEIVING_RESPONSE,
+        AT_CONSUME
     } _atCommandState;
 
     uint8_t _ready;
     String _buffer;
     String* _responseDataStorage;
-	String* _expected;
+    String* _expected;
+    unsigned int _stopConsumingAtLen;
 
-#define MAX_URC_HANDLERS 10 // 7 sockets + GPRS + GSMLocation + GSMVoiceCall
+#define SOCKETS_MAX 4
+#define MAX_URC_HANDLERS (SOCKETS_MAX + 1) // 4 Sockets + Location TODO to define
     static ModemUrcHandler* _urcHandlers[MAX_URC_HANDLERS];
 
 };

@@ -22,13 +22,16 @@ enum {
     GPRS_STATE_WAIT_DEATTACH_RESPONSE
 };
 
+//this should be a singleton!!!
 GPRS::GPRS() :
     _apn(NULL),
     _username(NULL),
     _password(NULL),
     _state(GPRS_OFF),
-    _timeout(0)
+    _timeout(0),
+    _init_sockets(0)
 {
+    MODEM.addUrcHandler(this);
 }
 
 NetworkStatus GPRS::attachGPRS(const char* apn, const char* user_name, const char* password, bool synchronous)
@@ -72,6 +75,9 @@ NetworkStatus GPRS::detachGPRS(bool synchronous)
     return _state;
 }
 
+/** Returns 0 if last command is still executing
+    @return 1 if success, > 1 if error
+*/
 uint8_t GPRS::ready()
 {
     uint8_t ready = MODEM.ready();
@@ -104,7 +110,7 @@ uint8_t GPRS::ready()
         break;
     }
     case GPRS_STATE_SET_PDP_CONTEXT: {
-        MODEM.sendf("AT+CGDCONT=1,\"IP\",\"%s\"", _apn);
+        MODEM.sendf("AT+CIPMUX=1"); //enable 8 sockets or simultaneous connections
         _readyState = GPRS_STATE_WAIT_SET_PDP_CONTEXT_RESPONSE;
         ready = 0;
         break;
@@ -140,7 +146,7 @@ uint8_t GPRS::ready()
     }
 
     case GPRS_STATE_ACTIVATE_IP: {
-        MODEM.send("AT+CGACT=1,1");
+        MODEM.send("AT+CIICR");
         _readyState = GPRS_STATE_WAIT_ACTIVATE_IP_RESPONSE;
         ready = 0;
         break;
@@ -157,7 +163,7 @@ uint8_t GPRS::ready()
     }
 
     case GPRS_STATE_DEACTIVATE_IP: {
-        MODEM.send("AT+CGACT=0,1");
+        MODEM.send("AT+CIPSHUT");
         _readyState = GPRS_STATE_WAIT_DEACTIVATE_IP_RESPONSE;
         ready = 0;
         break;
@@ -198,15 +204,11 @@ uint8_t GPRS::ready()
 IPAddress GPRS::getIPAddress()
 {
     String response;
-    MODEM.send("AT+CGPADDR=1");
+    MODEM.send("AT+CIFSR?");
     if (MODEM.waitForResponse(100, &response) == 1) {
-        if (response.startsWith("+CGPADDR: 1,\"") && response.endsWith("\"")) {
-            response.remove(response.length() - 1);
-            response.remove(0, 13);
-            IPAddress ip;
-            if (ip.fromString(response)) {
-                return ip;
-            }
+        IPAddress ip;
+        if (ip.fromString(response)) {
+            return ip;
         }
     }
     return IPAddress(0, 0, 0, 0);
@@ -220,4 +222,87 @@ void GPRS::setTimeout(unsigned long timeout)
 NetworkStatus GPRS::status()
 {
     return _state;
+}
+
+bool GPRS::connect(const char* host, uint16_t port, uint8_t* mux, unsigned long timeout_s, TCP_NetworkStatus* status) 
+{
+    if(_init_sockets >= SOCKETS_MAX){
+        if(status != NULL)
+            *status = TCP_NetworkStatus::ERROR;
+        return false;
+    }
+
+    unsigned long start = millis();
+    unsigned long timeout_ms = timeout_s * 1000;
+    
+    String response;
+    MODEM.sendf("AT+CIPSTART=\"TCP\",\"%s\",%s", host, String(port).c_str());
+    int result = MODEM.waitForResponse(timeout_ms, &response);
+    //this response should contain either "CONNECT OK", "CONNECT FAIL", or "ALREADY CONNECT"
+
+    if (result == -1){
+        if(status != NULL)
+            *status = TCP_NetworkStatus::TIMEOUT;
+        return false;
+    }
+    else if (result != 1){
+        if(status != NULL)
+            *status = TCP_NetworkStatus::ERROR;
+        return false;
+    }
+
+    if(response.indexOf(CONNECT_OK) != -1){
+        if(status != NULL)
+            *status = TCP_NetworkStatus::CONNECT_OK;
+        int index = response.indexOf("+CIPNUM:");
+        uint8_t newMux = atoi(response.c_str() + 8);
+        *mux = newMux;
+        _sockets[newMux] = new GSM_Socket(newMux);
+        return true;
+    }
+    else if(response.indexOf(CONNECT_FAIL) != -1){
+        if(status != NULL)
+            *status = TCP_NetworkStatus::CONNECT_FAIL;
+        return false;
+    }
+    else if(response.indexOf(CONNECT_ALREADY) != -1){
+        if(status != NULL)
+            *status = TCP_NetworkStatus::CONNECT_ALREADY;
+        return true;
+    }
+    else{
+        if(status != NULL)
+            *status = TCP_NetworkStatus::ERROR;
+        return false;
+    }
+}
+
+void GPRS::handleUrc(const String& urc){
+    if(urc.startsWith("+CIPRCV")){ //we can be safe that all the data segment is in urc
+    DBG("#DEBUG# HANDLING URC AT GPRS");
+        uint8_t mux = atoi(urc.c_str() + 8);
+        _sockets[mux]->handleUrc(urc);
+    }
+}
+
+bool GPRS::close(uint8_t mux, unsigned long timeout) //just closes the TCP connection
+{	
+    MODEM.sendf("AT+CIPCLOSE=%d", mux);
+    int result = MODEM.waitForResponse(timeout);
+    if (result == 1){
+        delete _sockets[mux];
+        _init_sockets--;
+        return true;
+    }
+    return false;
+}
+
+uint16_t GPRS::send(uint8_t mux, const void* buff, size_t len)
+{
+    return _sockets[mux]->send(buff, len);
+}
+
+uint8_t GPRS::read(uint8_t mux, char* buf, uint8_t len, unsigned long timeout)
+{
+    return _sockets[mux]->read(buf, len, timeout);
 }

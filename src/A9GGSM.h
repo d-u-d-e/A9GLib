@@ -5,7 +5,7 @@
 
 #include "GSM.h"
 #include "GPRS.h"
-#include "GSM_TCP.h"
+#include "socket.h"
 
 #define A9GGSM_VERSION "0.1.1"
 

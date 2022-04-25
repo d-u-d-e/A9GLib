@@ -8,7 +8,8 @@ ModemClass::ModemClass(Uart& uart, unsigned long baud) :
     _init(false),
     _atCommandState(AT_COMMAND_IDLE),
     _ready(1),
-    _responseDataStorage(NULL)
+    _responseDataStorage(NULL),
+    _stopConsumingAtLen(0)
 {
     _buffer.reserve(64); //reserve 64 chars
 }
@@ -82,7 +83,7 @@ bool ModemClass::restart()
 
 bool ModemClass::factoryReset()
 {
-    send(F("&FZ&W"));
+    send(F("AT&FZ&W"));
     return waitForResponse(1000) == 1;
 }
 
@@ -195,8 +196,8 @@ void ModemClass::sendf(const char *fmt, ...)
 
 int ModemClass::waitForResponse(unsigned long timeout, String* responseDataStorage, String* expected)
 {
-	//if expected is not NULL, clearly responseDataStorage is neglected
-	_expected = expected;
+    //if expected is not NULL, clearly responseDataStorage is neglected
+    _expected = expected;
     _responseDataStorage = responseDataStorage;
     for (unsigned long start = millis(); (millis() - start) < timeout;){
         uint8_t r = ready();
@@ -204,9 +205,9 @@ int ModemClass::waitForResponse(unsigned long timeout, String* responseDataStora
             return r;
         }
     }
-	//clean up in case timeout occured
+    //clean up in case timeout occured
     _responseDataStorage = NULL;
-	_expected = NULL;
+    _expected = NULL;
     _ready = 1;
     _buffer = ""; //clean buffer in case we got some bytes but didn't complete in time
     return -1;
@@ -237,8 +238,13 @@ void ModemClass::poll()
                 _atCommandState = AT_RECEIVING_RESPONSE;
                 _buffer = "";
             }
-            else if(c == '\n'){ //URC
-                
+            else if(_buffer.startsWith("+CIPRCV") && _buffer.endsWith(":")){ //DATA SEGMENT URC
+                //unfortunately '\n' cannot tell us that the data segment is ended, what if data contains itself the char '\n'?
+                //thus we read the len of the data segment provided in the header of the URC and keep consuming all of it    
+                _atCommandState = AT_CONSUME;
+                _stopConsumingAtLen = atoi(_buffer.c_str() + 10) + _buffer.length();
+            }
+            else if(c == '\n'){ 
                 _buffer.trim();
                 DBG("#DEBUG# URC received: ", _buffer); //can be empty due to unprecised formatting of URCs
 
@@ -253,24 +259,30 @@ void ModemClass::poll()
             }
             break;
         }
+        case AT_CONSUME:
+        {
+            if (_buffer.length() >= _stopConsumingAtLen)
+                _atCommandState = AT_COMMAND_IDLE;
+            break;
+        }
         case AT_RECEIVING_RESPONSE:
         {
-			//DBG(c);
-			if(_expected != NULL && (_buffer == *_expected)){
-				//TODO expected response received
-				_ready = 1;
-				_lastResponseOrUrcMillis = millis();
-				if (_lowPowerMode){ //after receiving the response, bring back low power mode if it were on
-					digitalWrite(GSM_LOW_PWR_PIN, LOW);
-				}
+            //DBG(c);
+            if(_expected != NULL && (_buffer == *_expected)){
+                //TODO expected response received
+                _ready = 1;
+                _lastResponseOrUrcMillis = millis();
+                if (_lowPowerMode){ //after receiving the response, bring back low power mode if it were on
+                    digitalWrite(GSM_LOW_PWR_PIN, LOW);
+                }
 #ifdef GSM_DEBUG
-				DBG("#DEBUG# expected response received: \"", _buffer, "\"");
+                DBG("#DEBUG# expected response received: \"", _buffer, "\"");
 #endif	
-				_buffer = "";
-				_expected = NULL;
-				_atCommandState = AT_COMMAND_IDLE;
-			   	return;	
-			} //else check for standard response
+                _buffer = "";
+                _expected = NULL;
+                _atCommandState = AT_COMMAND_IDLE;
+                return;
+            } //else check for standard response
             else if (_buffer.endsWith("\r\n") && _buffer.length() > 2){ //response arrived?
                 int responseResultIndex = _buffer.lastIndexOf(GSM_OK);
                 if (responseResultIndex != -1){
@@ -284,8 +296,8 @@ void ModemClass::poll()
                 }
 #ifdef GSM_DEBUG
                 else if ((responseResultIndex = _buffer.lastIndexOf(GSM_DBG_ERROR)) != -1){
-					_ready = 4;
-				}
+                    _ready = 4;
+                }
 #endif
                 if (_ready != 0){ //response actually arrived if != 0, otherwise it's just a new line
                     _lastResponseOrUrcMillis = millis();
@@ -295,18 +307,18 @@ void ModemClass::poll()
 
                     if (_responseDataStorage != NULL){
 #ifdef GSM_DEBUG
-						if (_ready != 4){
-                        	String responseCode = _buffer.substring(responseResultIndex + 2, _buffer.length() - 2);
-							_buffer.remove(responseResultIndex); //remove result code along with extra spaces
-							_buffer.trim();
-                        	DBG("#DEBUG# response received: \"", _buffer, "\", code: \"", responseCode, "\"");
-						}
-						else{
-							_buffer.trim();
-                        	DBG("#DEBUG# response received: \"", _buffer, "\"");
-						}	
+                        if (_ready != 4){
+                            String responseCode = _buffer.substring(responseResultIndex + 2, _buffer.length() - 2);
+                            _buffer.remove(responseResultIndex); //remove result code along with extra spaces
+                            _buffer.trim();
+                            DBG("#DEBUG# response received: \"", _buffer, "\", code: \"", responseCode, "\"");
+                        }
+                        else{
+                            _buffer.trim();
+                            DBG("#DEBUG# response received: \"", _buffer, "\"");
+                        }
 #else	
-						//when debug mode is off, error codes are sent using GSM_ERROR, not using GSM_DBG_ERROR
+                        //when debug mode is off, error codes are sent using GSM_ERROR, not using GSM_DBG_ERROR
                         _buffer.remove(responseResultIndex); //remove result code along with extra spaces
                         _buffer.trim();
 #endif
