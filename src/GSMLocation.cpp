@@ -51,7 +51,7 @@ bool GSMLocation::available()
         MODEM.waitForResponse();
     }
 
-    MODEM.poll();
+    MODEM.waitForUrc();
 
     if (_locationAvailable) {
         _commandSent = false;

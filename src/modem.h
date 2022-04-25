@@ -52,19 +52,24 @@ static void DBG(Args... args) {
 
 static const char GSM_OK[] PROGMEM = "\r\nOK\r\n";
 static const char GSM_ERROR[] PROGMEM = "\r\nERROR\r\n";
-static const char GSM_DBG_ERROR[] PROGMEM = "+CME ERROR";
-static const char GSM_NO_CARRIER[] PROGMEM = "\r\nNO CARRIER\r\n";
+static const char GSM_CME_ERROR[] PROGMEM = "+CME ERROR";
+static const char GSM_CMS_ERROR[] PROGMEM = "+CMS ERROR";
 static const char CLOCK_FORMAT[] PROGMEM = "+CCLK: \"%y/%m/%d,%H:%M:%S\"";
-static const char TCP_PROMPT[] PROGMEM = "\r\n>";
+static const char PROMPT[] PROGMEM = "\r\n>";
+
+
+class GSM_Socket;
+class GPRS;
 
 class ModemUrcHandler {
-public:
-    virtual void handleUrc(const String& urc) = 0;
+    public:
+    virtual void handleUrc(const uint8_t * data, uint16_t len) = 0;
 };
 
 class ModemClass
 {
 public:
+    friend class GPRS;
     ModemClass(Uart& uart, unsigned long baud);
     bool init();
     bool powerOff();
@@ -76,7 +81,7 @@ public:
     void lowPowerMode();
     void noLowPowerMode();
     uint16_t write(uint8_t c);
-    uint16_t write(const uint8_t*, uint16_t);
+    uint16_t write(const uint8_t* buf, uint16_t len);
     void flush();
     void send(const char* command);
     void send(__FlashStringHelper* command);
@@ -84,14 +89,15 @@ public:
     {
         send(command.c_str());
     }
-    void sendf(const char *fmt, ...);
+    void sendf(const char* fmt, ...);
 
-    int waitForResponse(unsigned long timeout = 100, String* responseDataStorage = NULL, String* expected = NULL);
+    int waitForResponse(unsigned long timeout = 100, String* responseDataStorage = NULL);
+    int waitForResponse(String expected, unsigned long timeout);
     uint8_t ready();
-    void poll();
+    void waitForUrc();
     void setResponseDataStorage(String* responseDataStorage);
     void setBaudRate(unsigned long baud);
-
+    void onResponseArrived();
     void removeUrcHandler(ModemUrcHandler* handler);
     void addUrcHandler(ModemUrcHandler* handler);
 
@@ -101,26 +107,26 @@ private:
     bool _lowPowerMode;
     unsigned long _lastResponseOrUrcMillis;
     bool _init;
+    uint16_t _chunkLen;
+    uint8_t _sock; //socket that will receive the chunk
 
     void beginSend();
-    void handleUrc();
+    
+    #define MAX_SOCKETS 3
+    GSM_Socket* _sockets[MAX_SOCKETS] = {NULL};
+    uint8_t _initSocks;
 
     enum
     {
-        AT_COMMAND_IDLE,
-        AT_RECEIVING_RESPONSE,
-        AT_CONSUME
-    } _atCommandState;
+        IDLE,
+        RECV_SOCK_CHUNK
+    } _state;
 
     uint8_t _ready;
     String _buffer;
     String* _responseDataStorage;
-    String* _expected;
-    unsigned int _stopConsumingAtLen;
-
-#define SOCKETS_MAX 4
-#define MAX_URC_HANDLERS (SOCKETS_MAX + 1) // 4 Sockets + Location TODO to define
-    static ModemUrcHandler* _urcHandlers[MAX_URC_HANDLERS];
+    #define MAX_URC_HANDLERS 1
+    ModemUrcHandler* _urcHandlers[MAX_URC_HANDLERS] = {NULL};
 
 };
 
