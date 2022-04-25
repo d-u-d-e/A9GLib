@@ -43,7 +43,6 @@ NetworkStatus GPRS::attachGPRS(const char* apn, const char* user_name, const cha
 
     if (synchronous) {
         unsigned long start = millis();
-
         while (ready() == 0) {
             if (_timeout && !((millis() - start) < _timeout)) {
                 _state = ERROR;
@@ -54,14 +53,12 @@ NetworkStatus GPRS::attachGPRS(const char* apn, const char* user_name, const cha
     } else {
         ready();
     }
-
     return _state;
 }
 
 NetworkStatus GPRS::detachGPRS(bool synchronous)
 {
     _readyState = GPRS_STATE_DEACTIVATE_IP;
-
     if (synchronous) {
         while (ready() == 0) {
             delay(100);
@@ -69,13 +66,9 @@ NetworkStatus GPRS::detachGPRS(bool synchronous)
     } else {
         ready();
     }
-
     return _state;
 }
 
-/** Returns 0 if last command is still executing
-    @return 1 if success, > 1 if error
-*/
 uint8_t GPRS::ready()
 {
     uint8_t ready = MODEM.ready();
@@ -195,7 +188,6 @@ uint8_t GPRS::ready()
         break;
     }
     }
-
     return ready;
 }
 
@@ -222,11 +214,11 @@ NetworkStatus GPRS::status()
     return _state;
 }
 
-bool GPRS::connect(const char* host, uint16_t port, uint8_t* mux, unsigned long timeout_s, TCP_NetworkStatus* status) 
+bool GPRS::connect(const char* host, uint16_t port, uint8_t* mux, unsigned long timeout_s, ConnectionStatus* status) 
 {
     if(MODEM._initSocks >= MAX_SOCKETS){
         if(status != NULL)
-            *status = TCP_NetworkStatus::ERROR;
+            *status = ConnectionStatus::ERROR;
         return false;
     }
 
@@ -240,19 +232,18 @@ bool GPRS::connect(const char* host, uint16_t port, uint8_t* mux, unsigned long 
 
     if (result == -1){
         if(status != NULL)
-            *status = TCP_NetworkStatus::TIMEOUT;
+            *status = ConnectionStatus::TIMEOUT;
         return false;
     }
     else if (result != 1){
         if(status != NULL)
-            *status = TCP_NetworkStatus::ERROR;
+            *status = ConnectionStatus::ERROR;
         return false;
     }
 
     if(response.indexOf(CONNECT_OK) != -1){
         if(status != NULL)
-            *status = TCP_NetworkStatus::CONNECT_OK;
-        int index = response.indexOf("+CIPNUM:");
+            *status = ConnectionStatus::CONNECT_OK;
         uint8_t newMux = atoi(response.c_str() + 8);
         *mux = newMux;
         MODEM._sockets[newMux] = new GSM_Socket(newMux);
@@ -261,17 +252,17 @@ bool GPRS::connect(const char* host, uint16_t port, uint8_t* mux, unsigned long 
     }
     else if(response.indexOf(CONNECT_FAIL) != -1){
         if(status != NULL)
-            *status = TCP_NetworkStatus::CONNECT_FAIL;
+            *status = ConnectionStatus::CONNECT_FAIL;
         return false;
     }
     else if(response.indexOf(CONNECT_ALREADY) != -1){
         if(status != NULL)
-            *status = TCP_NetworkStatus::CONNECT_ALREADY;
+            *status = ConnectionStatus::CONNECT_ALREADY;
         return true;
     }
     else{
         if(status != NULL)
-            *status = TCP_NetworkStatus::ERROR;
+            *status = ConnectionStatus::ERROR;
         return false;
     }
 }
@@ -293,7 +284,7 @@ uint16_t GPRS::send(uint8_t mux, const void* buff, uint16_t len)
     return MODEM._sockets[mux]->send(buff, len);
 }
 
-uint16_t GPRS::read(uint8_t mux, uint8_t* buf, uint16_t len, unsigned long timeout)
+uint16_t GPRS::read(uint8_t mux, void* buf, uint16_t len, unsigned long timeout)
 {
     return MODEM._sockets[mux]->read(buf, len, timeout);
 }

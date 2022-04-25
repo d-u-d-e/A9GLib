@@ -63,7 +63,7 @@ class GPRS;
 
 class ModemUrcHandler {
     public:
-    virtual void handleUrc(const uint8_t * data, uint16_t len) = 0;
+    virtual void handleUrc(const void* data, uint16_t len) = 0;
 };
 
 class ModemClass
@@ -81,7 +81,7 @@ public:
     void lowPowerMode();
     void noLowPowerMode();
     uint16_t write(uint8_t c);
-    uint16_t write(const uint8_t* buf, uint16_t len);
+    uint16_t write(const void* buf, uint16_t len);
     void flush();
     void send(const char* command);
     void send(__FlashStringHelper* command);
@@ -91,10 +91,12 @@ public:
     }
     void sendf(const char* fmt, ...);
 
-    int waitForResponse(unsigned long timeout = 100, String* responseDataStorage = NULL);
-    int waitForResponse(String expected, unsigned long timeout);
+
+    int waitForResponse(unsigned long timeout = 100L, String* responseDataStorage = NULL);
+    int waitForResponse(String& expected, unsigned long timeout);
+    void parseBuffer();
+    void checkUrc();
     uint8_t ready();
-    void waitForUrc();
     void setResponseDataStorage(String* responseDataStorage);
     void setBaudRate(unsigned long baud);
     void onResponseArrived();
@@ -127,6 +129,7 @@ private:
     String* _responseDataStorage;
     #define MAX_URC_HANDLERS 1
     ModemUrcHandler* _urcHandlers[MAX_URC_HANDLERS] = {NULL};
+    String* _expected;
 
 };
 

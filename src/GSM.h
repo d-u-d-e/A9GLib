@@ -5,7 +5,7 @@
 
 #include "modem.h"
 
-enum NetworkStatus { ERROR, CONNECTING, GSM_READY, GSM_OFF, GPRS_READY, GPRS_OFF};
+enum NetworkStatus {ERROR, CONNECTING, GSM_READY, GSM_OFF, GPRS_READY, GPRS_OFF};
 
 class GSM {
 
