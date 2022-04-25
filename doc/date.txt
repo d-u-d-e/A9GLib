@@ -1,0 +1,1 @@
+http://api.timezonedb.com/v2.1/get-time-zone?key=C01155RAL6MR&by=zone&zone=Europe/Rome
