@@ -99,7 +99,6 @@ public:
     uint8_t ready();
     void setResponseDataStorage(String* responseDataStorage);
     void setBaudRate(unsigned long baud);
-    void onResponseArrived();
     void removeUrcHandler(ModemUrcHandler* handler);
     void addUrcHandler(ModemUrcHandler* handler);
 

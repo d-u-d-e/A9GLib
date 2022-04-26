@@ -36,7 +36,11 @@ bool ModemClass::init()
 {
     if(!_init){
         _uart->begin(_baud > 115200 ? 115200 : _baud);
+
         send(F("ATV1")); //set verbose mode
+        if(waitForResponse() != 1) return false;
+
+        send(F("ATE0")); //set echo off 
         if(waitForResponse() != 1) return false;
 
         if (!autosense()){
@@ -48,9 +52,6 @@ bool ModemClass::init()
         #else
         send(F("AT+CMEE=0"));  // turn off error codes
         #endif
-        if(waitForResponse() != 1) return false;
-
-        send(F("ATE0")); //set echo off 
         if(waitForResponse() != 1) return false;
 
         //check if baud can be set higher than default 115200
@@ -210,6 +211,7 @@ int ModemClass::waitForResponse(unsigned long timeout, String* responseDataStora
         if(r != 0) return r;
     }
     //clean up in case timeout occured
+    DBG("#DEBUG# response timeout!");
     _responseDataStorage = NULL;
     _ready = 1;
     _state = IDLE;
@@ -228,6 +230,7 @@ int ModemClass::waitForResponse(String& expected, unsigned long timeout)
         if(r != 0) return r;
     }
     //clean up in case timeout occured
+    DBG("#DEBUG# response timeout!");
     _ready = 1;
     _state = IDLE;
     _buffer = ""; //clean buffer in case we got some bytes but didn't complete in time
@@ -338,7 +341,7 @@ void ModemClass::checkUrc()
         _buffer = "";
     }
     //############################################################################
-    else if(_buffer.endsWith("\r\n")){
+    else if(_buffer.endsWith("\r\n") && _buffer.length() > 2){
         _buffer.trim();
         if (_buffer.length() > 0){
             _lastResponseOrUrcMillis = millis();
