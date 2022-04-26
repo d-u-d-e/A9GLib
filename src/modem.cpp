@@ -168,6 +168,9 @@ void ModemClass::send(const char* command)
         delay(MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS - delta);
     }
 
+
+    _ready = 0;
+    DBG("#DEBUG# command sent: \"", command, "\"");
     _uart->println(command);
     _uart->flush();
 }
@@ -186,6 +189,8 @@ void ModemClass::send(__FlashStringHelper* command)
         delay(MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS - delta);
     }
 
+    _ready = 0;
+    DBG("#DEBUG# command sent: \"", command, "\"");
     _uart->println(command);
     _uart->flush();
 }
@@ -204,7 +209,6 @@ int ModemClass::waitForResponse(unsigned long timeout, String* responseDataStora
 {
     _responseDataStorage = responseDataStorage;
     _state = RECV_RESP;
-    _ready = 0;
     unsigned long start = millis();
     while ((millis() - start) < timeout){
         uint8_t r = ready();
@@ -223,7 +227,6 @@ int ModemClass::waitForResponse(String& expected, unsigned long timeout)
 {
     _expected = expected;
     _state = RECV_EXP;
-    _ready = 0;
     unsigned long start = millis();
     while ((millis() - start) < timeout){
         uint8_t r = ready();
@@ -236,6 +239,7 @@ int ModemClass::waitForResponse(String& expected, unsigned long timeout)
     _buffer = ""; //clean buffer in case we got some bytes but didn't complete in time
     return -1;
 }
+
 
 uint8_t ModemClass::ready()
 {
@@ -273,44 +277,53 @@ void ModemClass::poll()
             case RECV_RESP:
                 _buffer += c;
                 int responseResultIndex;
-                if (_buffer.endsWith("\r\n")){
-                    if ((responseResultIndex = _buffer.indexOf(GSM_OK)) != -1){
-                        _ready = 1;
-                    }
-                    else if ((responseResultIndex = _buffer.indexOf(GSM_ERROR)) != -1){
-                        _ready = 2;
-                    }
+                #ifdef GSM_DEBUG
+                    String error;
+                    String response;
+                #endif
+                if (_buffer.endsWith(GSM_OK)){
+                    _ready = 1;
                     #ifdef GSM_DEBUG
-                    else if ((responseResultIndex = _buffer.indexOf(GSM_CME_ERROR)) != -1){
-                        _ready = 3;
-                    }
-                    else if ((responseResultIndex = _buffer.indexOf(GSM_CMS_ERROR)) != -1){
-                        _ready = 4;
-                    }
+                        response = _buffer;
                     #endif
                 }
+                else if (_buffer.endsWith(GSM_ERROR)){
+                    _ready = 2;
+                    #ifdef GSM_DEBUG
+                        response = _buffer;
+                    #endif
+                }
+                #ifdef GSM_DEBUG
+                else if (_buffer.endsWith(GSM_CME_ERROR)){
+                    streamSkipUntil('\n', error);
+                    _ready = 3;
+                    response = GSM_CME_ERROR + error; 
+                }
+                else if (_buffer.endsWith(GSM_CMS_ERROR)){
+                    streamSkipUntil('\n', error);
+                    _ready = 4;
+                    response = GSM_CMS_ERROR + error; 
+                }
+                #endif
                 if (_ready != 0){ 
                     _lastResponseOrUrcMillis = millis();
                     if (_lowPowerMode){ //after receiving the response, bring back low power mode if it were on
                         digitalWrite(GSM_LOW_PWR_PIN, LOW);
                     }
                     #ifdef GSM_DEBUG
-                    String resp = _buffer.substring(responseResultIndex);
-                    resp.trim();
-                    DBG("#DEBUG# response received: \"", resp, "\"");
+                    response.trim();
+                    DBG("#DEBUG# response received: \"", response, "\"");
                     #endif
                     if (_responseDataStorage != NULL){
-                        String resp = _buffer.substring(responseResultIndex);
-                        resp.trim();
-                        *_responseDataStorage = resp; 
-                        _responseDataStorage = NULL;
+                        _buffer.trim();
+                        *_responseDataStorage = _buffer;
                     }
-                    _buffer = ""; //response has been saved!
+                    _buffer = ""; 
                     _state = IDLE;
                     break;
                 }
-                checkUrc();
                 break;
+                checkUrc();
             } //end switch _state
             break;
         //############################################################################ CASE URC_STATE
@@ -321,6 +334,7 @@ void ModemClass::poll()
                 _urcState = URC_IDLE;
                 if (_state == IDLE) _ready = 1;
                 else _ready = 0;
+                streamSkipUntil('\n');
             }
             //send to correct socket!
             _sockets[_sock]->handleUrc(&c, 1);
@@ -330,31 +344,57 @@ void ModemClass::poll()
     } //end while
 }
 
+inline int16_t ModemClass::streamGetIntBefore(char lastChar)
+{
+    char buf[7];
+    int16_t bytesRead = _uart->readBytesUntil(lastChar, buf, 7);
+    if (bytesRead && bytesRead < 7) {
+        buf[bytesRead] = '\0';
+        int16_t res = atoi(buf);
+        return res;
+    }
+    return -999;
+}
+
+inline bool ModemClass::streamSkipUntil(const char c, String* save = NULL, const uint32_t timeout_ms = 1000L)
+{
+    uint32_t startMillis = millis();
+    while (millis() - startMillis < timeout_ms){
+        while (_uart->available()){
+            char c = _uart->read();
+            if (save != NULL) *save += c; 
+            if (_uart->read() == c) return true;
+        }
+    }
+    return false;
+}
 void ModemClass::checkUrc()
 {
     //############################################################################
-    if (_buffer.startsWith("+CIPRCV") && _buffer.endsWith(":")){
-        _sock = atoi(_buffer.c_str() + 8);
-        _chunkLen = atoi(_buffer.c_str() + 10);
+    if (_buffer.endsWith("+CIPRCV,")){
+        _sock = streamGetIntBefore(',');
+        _chunkLen = streamGetIntBefore(':');
         _urcState = URC_RECV_SOCK_CHUNK;
         _ready = 0;
         _buffer = "";
     }
     //############################################################################
-    else if(_buffer.endsWith("\r\n") && _buffer.length() > 2){
+    else if (_buffer.endsWith("+CREG") || _buffer.endsWith("+CPIN")) {
+        
+    }
+    else if(_buffer.endsWith("\r\n") && _buffer.startsWith("\r\n+")){
         _buffer.trim();
-        if (_buffer.length() > 0){
-            _lastResponseOrUrcMillis = millis();
-            DBG("#DEBUG# unhandled URC received: ", _buffer);
-            _buffer = "";
-        } 
+        _lastResponseOrUrcMillis = millis();
+        DBG("#DEBUG# unhandled URC received: ", _buffer);
+        _buffer = "";
+    }
+    else{
+        _buffer.trim();
+        if (_buffer.length())
+            DBG("#DEBUG# unhandled data: ", _buffer);
+        _buffer = "";
     }
     //############################################################################
-}
-
-void ModemClass::setResponseDataStorage(String* responseDataStorage)
-{
-    _responseDataStorage = responseDataStorage;
 }
 
 void ModemClass::setBaudRate(unsigned long baud)
