@@ -81,7 +81,7 @@ public:
     void lowPowerMode();
     void noLowPowerMode();
     uint16_t write(uint8_t c);
-    uint16_t write(const void* buf, uint16_t len);
+    uint16_t write(const uint8_t* buf, uint16_t len);
     void flush();
     void send(const char* command);
     void send(__FlashStringHelper* command);
@@ -94,7 +94,7 @@ public:
 
     int waitForResponse(unsigned long timeout = 100L, String* responseDataStorage = NULL);
     int waitForResponse(String& expected, unsigned long timeout);
-    void parseBuffer();
+    void poll();
     void checkUrc();
     uint8_t ready();
     void setResponseDataStorage(String* responseDataStorage);
@@ -121,15 +121,17 @@ private:
     enum
     {
         IDLE,
+        RECV_RESP,
+        RECV_EXP,
         RECV_SOCK_CHUNK
-    } _state;
+    } _state, _prevState;
 
     uint8_t _ready;
     String _buffer;
     String* _responseDataStorage;
     #define MAX_URC_HANDLERS 1
     ModemUrcHandler* _urcHandlers[MAX_URC_HANDLERS] = {NULL};
-    String* _expected;
+    String _expected;
 
 };
 

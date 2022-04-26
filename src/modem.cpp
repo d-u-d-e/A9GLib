@@ -148,26 +148,7 @@ void ModemClass::flush(){
 
 void ModemClass::send(const char* command)
 {
-    beginSend();
-    _uart->println(command);
-    _uart->flush();
-}
-
-void ModemClass::send(__FlashStringHelper* command){
-    beginSend();
-    _uart->println(command);
-    _uart->flush();
-}
-
-void ModemClass::beginSend(){
-
-    if (_lowPowerMode){
-        digitalWrite(GSM_LOW_PWR_PIN, HIGH); //turn off low power mode if on
-        delay(5);
-    }
-
-    /*
-    The chain Command -> Response shall always be respected and a new command must not be issued
+    /* The chain Command -> Response shall always be respected and a new command must not be issued
     before the module has terminated all the sending of its response result code (whatever it may be).
     This applies especially to applications that ?sense? the OK text and therefore may send the next
     command before the complete code <CR><LF>OK<CR><LF> is sent by the module.
@@ -177,15 +158,36 @@ void ModemClass::beginSend(){
     command, then at least the 20ms pause time shall be respected.
     */
 
-    // compare the time of the last response or URC and ensure
-    // at least 20ms have passed before sending a new command
+    if (_lowPowerMode){
+        digitalWrite(GSM_LOW_PWR_PIN, HIGH); //turn off low power mode if on
+        delay(5);
+    }
 
     unsigned long delta = millis() - _lastResponseOrUrcMillis;
     if(delta < MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS){
         delay(MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS - delta);
     }
-    _state = RECV_RESP;
-    _ready = 0;
+
+    _uart->println(command);
+    _uart->flush();
+}
+
+void ModemClass::send(__FlashStringHelper* command)
+{
+    if (_lowPowerMode){
+        digitalWrite(GSM_LOW_PWR_PIN, HIGH); //turn off low power mode if on
+        delay(5);
+    }
+
+    // compare the time of the last response or URC and ensure
+    // at least 20ms have passed before sending a new command
+    unsigned long delta = millis() - _lastResponseOrUrcMillis;
+    if(delta < MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS){
+        delay(MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS - delta);
+    }
+
+    _uart->println(command);
+    _uart->flush();
 }
 
 void ModemClass::sendf(const char *fmt, ...)
@@ -201,10 +203,12 @@ void ModemClass::sendf(const char *fmt, ...)
 int ModemClass::waitForResponse(unsigned long timeout, String* responseDataStorage)
 {
     _responseDataStorage = responseDataStorage;
+    _state = RECV_RESP;
+    _ready = 0;
     unsigned long start = millis();
-    while ((millis() - start) < timeout && _uart->available()){
-        parseBuffer();
-        if(_ready != 0) return _ready;
+    while ((millis() - start) < timeout){
+        uint8_t r = ready();
+        if(r != 0) return r;
     }
     //clean up in case timeout occured
     _responseDataStorage = NULL;
@@ -214,14 +218,15 @@ int ModemClass::waitForResponse(unsigned long timeout, String* responseDataStora
     return -1;
 }
 
-int ModemClass::waitForResponse(String * expected, unsigned long timeout)
+int ModemClass::waitForResponse(String& expected, unsigned long timeout)
 {
-    //please make sure expected is not NULL!
     _expected = expected;
+    _state = RECV_EXP;
+    _ready = 0;
     unsigned long start = millis();
-    while ((millis() - start) < timeout && _uart->available()){
-        parseBuffer();
-        if(_ready != 0) return _ready;
+    while ((millis() - start) < timeout){
+        uint8_t r = ready();
+        if(r != 0) return r;
     }
     //clean up in case timeout occured
     _ready = 1;
@@ -230,82 +235,94 @@ int ModemClass::waitForResponse(String * expected, unsigned long timeout)
     return -1;
 }
 
-void ModemClass::parseBuffer()
+uint8_t ModemClass::ready()
 {
-    //remember to check if _uart->available() > 0
-    char c = _uart->read();
-    switch(_state){
-    default:
-    //############################################################################
-    case IDLE:
-        _buffer += c;
-        checkUrc();
-        break;
-    //############################################################################
-    case RECV_EXP:
-        _buffer += c;
-        if (_buffer.endsWith(*_expected)){
-            _ready = 1;
-            _state = IDLE;
-            _buffer = "";
-            break;
-        }
-        checkUrc();
-        break;
-    //############################################################################
-    case RECV_RESP:
-        _buffer += c;
-        bool endsLine = _buffer.endsWith("\r\n");
-        int responseResultIndex;
-        if (endsLine){
-            if ((responseResultIndex = _buffer.indexOf(GSM_OK)) != -1){
-                _ready = 1;
-            }
-            else if ((responseResultIndex = _buffer.indexOf(GSM_ERROR)) != -1){
-                _ready = 2;
-            }
-            #ifdef GSM_DEBUG
-            else if ((responseResultIndex = _buffer.indexOf(GSM_CME_ERROR)) != -1){
-                _ready = 3;
-            }
-            else if ((responseResultIndex = _buffer.indexOf(GSM_CMS_ERROR)) != -1){
-                _ready = 4;
-            }
-            #endif
-        }
-        if (_ready != 0){ 
-            _lastResponseOrUrcMillis = millis();
-            if (_lowPowerMode){ //after receiving the response, bring back low power mode if it were on
-                digitalWrite(GSM_LOW_PWR_PIN, LOW);
-            }
+    poll();
+    return _ready;
+}
 
-            DBG("#DEBUG# response received: \"", _buffer.substring(responseResultIndex).trim(), "\"");
-            if (_responseDataStorage != NULL){
-                 *_responseDataStorage = _buffer.substring(responseResultIndex).trim();
-                 _responseDataStorage = NULL;
-            }
-            _buffer = ""; //response has been saved!
-            _state = IDLE;
+void ModemClass::poll()
+{
+    while(_uart->available()){
+        char c = _uart->read();
+        switch(_state){
+        default:
+        //############################################################################
+        case IDLE:
+            _buffer += c;
+            checkUrc();
             break;
+        //############################################################################
+        case RECV_EXP:
+            _buffer += c;
+            if (_buffer.endsWith(_expected)){
+                _ready = 1;
+                _state = IDLE;
+                _buffer = "";
+                break;
+            }
+            checkUrc();
+            break;
+        //############################################################################
+        case RECV_RESP:
+            _buffer += c;
+            int responseResultIndex;
+            if (_buffer.endsWith("\r\n")){
+                if ((responseResultIndex = _buffer.indexOf(GSM_OK)) != -1){
+                    _ready = 1;
+                }
+                else if ((responseResultIndex = _buffer.indexOf(GSM_ERROR)) != -1){
+                    _ready = 2;
+                }
+                #ifdef GSM_DEBUG
+                else if ((responseResultIndex = _buffer.indexOf(GSM_CME_ERROR)) != -1){
+                    _ready = 3;
+                }
+                else if ((responseResultIndex = _buffer.indexOf(GSM_CMS_ERROR)) != -1){
+                    _ready = 4;
+                }
+                #endif
+            }
+            if (_ready != 0){ 
+                _lastResponseOrUrcMillis = millis();
+                if (_lowPowerMode){ //after receiving the response, bring back low power mode if it were on
+                    digitalWrite(GSM_LOW_PWR_PIN, LOW);
+                }
+                #ifdef GSM_DEBUG
+                String resp = _buffer.substring(responseResultIndex);
+                resp.trim();
+                DBG("#DEBUG# response received: \"", resp, "\"");
+                #endif
+                if (_responseDataStorage != NULL){
+                    String resp = _buffer.substring(responseResultIndex);
+                    resp.trim();
+                    *_responseDataStorage = resp; 
+                    _responseDataStorage = NULL;
+                }
+                _buffer = ""; //response has been saved!
+                _state = IDLE;
+                break;
+            }
+            checkUrc();
+            break;
+        //############################################################################
+        case RECV_SOCK_CHUNK:
+            if(--_chunkLen <= 0){
+                //done receiving chunk
+                _lastResponseOrUrcMillis = millis();
+                _state = _prevState;
+                if (_state == IDLE) _ready = 1;
+                else _ready = 0;
+            }
+            //send to correct socket!
+            _sockets[_sock]->handleUrc(&c, 1);
+            break;
+        //############################################################################
         }
-        checkUrc();
-        break;
-    //############################################################################
-    case RECV_SOCK_CHUNK:
-        if(--_chunkLen <= 0){
-            //done receiving chunk
-            _state = _prevState;
-            if (_state == IDLE) _ready = 1;
-            else _ready = 0;
-        }
-        //send to correct socket!
-        _sockets[_sock]->handleUrc(&c, 1);
-        break;
-    //############################################################################
     }
 }
 
-void ModemClass:checkUrc()
+void ModemClass::checkUrc()
 {
     //############################################################################
     if (_buffer.startsWith("+CIPRCV") && _buffer.endsWith(":")){
@@ -320,21 +337,12 @@ void ModemClass:checkUrc()
     else if(_buffer.endsWith("\r\n")){
         _buffer.trim();
         if (_buffer.length() > 0){
+            _lastResponseOrUrcMillis = millis();
             DBG("#DEBUG# unhandled URC received: ", _buffer);
             _buffer = "";
         } 
     }
     //############################################################################
-}
-
-uint8_t ModemClass::ready()
-{
-    //not suited in general programming, only for setting up automatic state machines
-    //such as GPRS initialization
-    while(_uart->available()){
-        parseBuffer();
-    }
-    return _ready;
 }
 
 void ModemClass::setResponseDataStorage(String* responseDataStorage)
