@@ -118,13 +118,18 @@ private:
     GSM_Socket* _sockets[MAX_SOCKETS] = {NULL};
     uint8_t _initSocks;
 
+    enum 
+    {
+        URC_IDLE,
+        URC_RECV_SOCK_CHUNK
+    } _urcState;
+
     enum
     {
         IDLE,
         RECV_RESP,
-        RECV_EXP,
-        RECV_SOCK_CHUNK
-    } _state, _prevState;
+        RECV_EXP
+    } _state;
 
     uint8_t _ready;
     String _buffer;

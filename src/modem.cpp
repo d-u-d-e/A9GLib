@@ -9,8 +9,7 @@ ModemClass::ModemClass(Uart& uart, unsigned long baud):
     _init(false),
     _ready(1),
     _responseDataStorage(NULL),
-    _initSocks(0),
-    _expected(NULL)
+    _initSocks(0)
 {
     _buffer.reserve(64); //reserve 64 chars
 }
@@ -245,81 +244,87 @@ void ModemClass::poll()
 {
     while(_uart->available()){
         char c = _uart->read();
-        switch(_state){
+        switch(_urcState){
         default:
-        //############################################################################
-        case IDLE:
-            _buffer += c;
-            checkUrc();
-            break;
-        //############################################################################
-        case RECV_EXP:
-            _buffer += c;
-            if (_buffer.endsWith(_expected)){
-                _ready = 1;
-                _state = IDLE;
-                _buffer = "";
+        //############################################################################ CASE URC STATE
+        case URC_IDLE:
+            switch(_state){
+            default:
+            //############################################################################ CASE STATE
+            case IDLE:
+                _buffer += c;
+                checkUrc();
                 break;
-            }
-            checkUrc();
-            break;
-        //############################################################################
-        case RECV_RESP:
-            _buffer += c;
-            int responseResultIndex;
-            if (_buffer.endsWith("\r\n")){
-                if ((responseResultIndex = _buffer.indexOf(GSM_OK)) != -1){
+            //############################################################################ CASE STATE
+            case RECV_EXP:
+                _buffer += c;
+                if (_buffer.endsWith(_expected)){
                     _ready = 1;
+                    _state = IDLE;
+                    _buffer = "";
+                    break;
                 }
-                else if ((responseResultIndex = _buffer.indexOf(GSM_ERROR)) != -1){
-                    _ready = 2;
+                checkUrc();
+                break;
+            //############################################################################ CASE STATE
+            case RECV_RESP:
+                _buffer += c;
+                int responseResultIndex;
+                if (_buffer.endsWith("\r\n")){
+                    if ((responseResultIndex = _buffer.indexOf(GSM_OK)) != -1){
+                        _ready = 1;
+                    }
+                    else if ((responseResultIndex = _buffer.indexOf(GSM_ERROR)) != -1){
+                        _ready = 2;
+                    }
+                    #ifdef GSM_DEBUG
+                    else if ((responseResultIndex = _buffer.indexOf(GSM_CME_ERROR)) != -1){
+                        _ready = 3;
+                    }
+                    else if ((responseResultIndex = _buffer.indexOf(GSM_CMS_ERROR)) != -1){
+                        _ready = 4;
+                    }
+                    #endif
                 }
-                #ifdef GSM_DEBUG
-                else if ((responseResultIndex = _buffer.indexOf(GSM_CME_ERROR)) != -1){
-                    _ready = 3;
-                }
-                else if ((responseResultIndex = _buffer.indexOf(GSM_CMS_ERROR)) != -1){
-                    _ready = 4;
-                }
-                #endif
-            }
-            if (_ready != 0){ 
-                _lastResponseOrUrcMillis = millis();
-                if (_lowPowerMode){ //after receiving the response, bring back low power mode if it were on
-                    digitalWrite(GSM_LOW_PWR_PIN, LOW);
-                }
-                #ifdef GSM_DEBUG
-                String resp = _buffer.substring(responseResultIndex);
-                resp.trim();
-                DBG("#DEBUG# response received: \"", resp, "\"");
-                #endif
-                if (_responseDataStorage != NULL){
+                if (_ready != 0){ 
+                    _lastResponseOrUrcMillis = millis();
+                    if (_lowPowerMode){ //after receiving the response, bring back low power mode if it were on
+                        digitalWrite(GSM_LOW_PWR_PIN, LOW);
+                    }
+                    #ifdef GSM_DEBUG
                     String resp = _buffer.substring(responseResultIndex);
                     resp.trim();
-                    *_responseDataStorage = resp; 
-                    _responseDataStorage = NULL;
+                    DBG("#DEBUG# response received: \"", resp, "\"");
+                    #endif
+                    if (_responseDataStorage != NULL){
+                        String resp = _buffer.substring(responseResultIndex);
+                        resp.trim();
+                        *_responseDataStorage = resp; 
+                        _responseDataStorage = NULL;
+                    }
+                    _buffer = ""; //response has been saved!
+                    _state = IDLE;
+                    break;
                 }
-                _buffer = ""; //response has been saved!
-                _state = IDLE;
+                checkUrc();
                 break;
-            }
-            checkUrc();
+            } //end switch _state
             break;
-        //############################################################################
-        case RECV_SOCK_CHUNK:
+        //############################################################################ CASE URC_STATE
+        case URC_RECV_SOCK_CHUNK:
             if(--_chunkLen <= 0){
                 //done receiving chunk
                 _lastResponseOrUrcMillis = millis();
-                _state = _prevState;
+                _urcState = URC_IDLE;
                 if (_state == IDLE) _ready = 1;
                 else _ready = 0;
             }
             //send to correct socket!
             _sockets[_sock]->handleUrc(&c, 1);
             break;
-        //############################################################################
-        }
-    }
+        //############################################################################ CASE URC_STATE
+        } //end switch _urcState
+    } //end while
 }
 
 void ModemClass::checkUrc()
@@ -328,8 +333,7 @@ void ModemClass::checkUrc()
     if (_buffer.startsWith("+CIPRCV") && _buffer.endsWith(":")){
         _sock = atoi(_buffer.c_str() + 8);
         _chunkLen = atoi(_buffer.c_str() + 10);
-        _prevState = _state;
-        _state = RECV_SOCK_CHUNK;
+        _urcState = URC_RECV_SOCK_CHUNK;
         _ready = 0;
         _buffer = "";
     }
