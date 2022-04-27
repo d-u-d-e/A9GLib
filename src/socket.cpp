@@ -58,13 +58,26 @@ uint16_t GSM_Socket::read(void* buf, uint16_t len, unsigned long timeout) //TODO
 
 uint16_t GSM_Socket::send(const void* buff, uint16_t len) 
 {
-    String prompt(PROMPT);
+    //String prompt(PROMPT);
     MODEM.sendf("AT+CIPSEND=%d,%d", _mux, (uint16_t) len); //change this if mux is enabled
-    int resp = MODEM.waitForResponse(prompt, 2000L); //wait for the > prompt issued by the modem
+    int resp = MODEM.waitForResponse(2000L); //check if the prompt is issued !!!! TODO
+    //if not remove this line!
     if (resp != 1) return 0;
+    if (!MODEM.turnEcho(false)) return 0;
     MODEM.write(reinterpret_cast<const uint8_t*>(buff), len);
     MODEM.write(0x1A); //tell modem to send
     MODEM.flush();
-    if(MODEM.waitForResponse(10000L) != 1) return 0; //wait at least 10 secs, but maybe add a timeout
+    uint8_t r;
+    uint32_t start = millis();
+    while (millis() - start < 10000L && !(r = MODEM.ready())) {}
+    if (!r) return 0;
+    //make sure modem is ready and not parsing URC
+    //maybe change logic so that we dont need to change its state!
+    //here it is not 100% guaranteed it will not issue any URC, though very not likely! TODO
+    //for example let the modem echo the buffer, and skip all of it until 0x1A is read (after len bytes)
+    MODEM._atCommandState = AT_RECV_RESP;
+    resp = MODEM.waitForResponse(10000L); //does this read SEND OK? Or OK? TODO
+    MODEM.turnEcho(true);
+    if (resp != 1) return 0;
     return len;
 }

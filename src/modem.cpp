@@ -40,9 +40,6 @@ bool ModemClass::init()
         send(F("ATV1")); //set verbose mode
         if(waitForResponse() != 1) return false;
 
-        send(F("ATE0")); //set echo off 
-        if(waitForResponse() != 1) return false;
-
         if (!autosense()){
             return false;
         }
@@ -53,6 +50,9 @@ bool ModemClass::init()
         send(F("AT+CMEE=0"));  // turn off error codes
         #endif
         if(waitForResponse() != 1) return false;
+
+        send(F("AT+CMPROMPT=2")); //turn off TCP prompt ">" and "SEND OK" response, maybe use =0 which only removes the prompt TODO
+        //it is showed after using AT+CIPSEND=<mux>,<size>
 
         //check if baud can be set higher than default 115200
 
@@ -134,11 +134,36 @@ void ModemClass::noLowPowerMode()
 
 uint16_t ModemClass::write(uint8_t c)
 {
-    return _uart->write(c);
+    //here we disable the echo mode, because this is not intended to be used as a send method!
+    bool res1 = turnEcho(false);
+    _uart->write(c);
+    bool res2 = turnEcho(true);
+    if (res1 == true && res2 == true) return 1;
+    else return 0;
+}
+
+bool ModemClass::turnEcho(bool on)
+{
+    sendf("ATE%d", on? 1:0);
+    uint8_t resp = waitForResponse();
+    if (resp != 1){
+        DBG("#DEBUG# setting echo mode failed!");
+        return false;
+    }
+    return true;
+}
+
+uint16_t ModemClass::write(uint8_t c)
+{
+    //make sure to turn off echo, because this is not intended to be used as a send method!
+    //so we don't want the modem to echo back c
+   return _uart->write(c);
 }
 
 uint16_t ModemClass::write(const uint8_t* buf, uint16_t size)
 {
+    //make sure to turn off echo, because this is not intended to be used as a send method!
+    //so we don't want the modem to echo back the content of buffer
     return _uart->write(buf, size);
 }
 
@@ -170,7 +195,7 @@ void ModemClass::send(const char* command)
 
 
     _ready = 0;
-    DBG("#DEBUG# command sent: \"", command, "\"");
+    _atCommandState = AT_IDLE;
     _uart->println(command);
     _uart->flush();
 }
@@ -190,7 +215,7 @@ void ModemClass::send(__FlashStringHelper* command)
     }
 
     _ready = 0;
-    DBG("#DEBUG# command sent: \"", command, "\"");
+    _atCommandState = AT_IDLE;
     _uart->println(command);
     _uart->flush();
 }
@@ -205,10 +230,10 @@ void ModemClass::sendf(const char *fmt, ...)
     send(buf);
 }
 
+//call this only after send!
 int ModemClass::waitForResponse(unsigned long timeout, String* responseDataStorage)
 {
     _responseDataStorage = responseDataStorage;
-    _state = RECV_RESP;
     unsigned long start = millis();
     while ((millis() - start) < timeout){
         uint8_t r = ready();
@@ -218,28 +243,10 @@ int ModemClass::waitForResponse(unsigned long timeout, String* responseDataStora
     DBG("#DEBUG# response timeout!");
     _responseDataStorage = NULL;
     _ready = 1;
-    _state = IDLE;
+    _state = AT_IDLE;
     _buffer = ""; //clean buffer in case we got some bytes but didn't complete in time
     return -1;
 }
-
-int ModemClass::waitForResponse(String& expected, unsigned long timeout)
-{
-    _expected = expected;
-    _state = RECV_EXP;
-    unsigned long start = millis();
-    while ((millis() - start) < timeout){
-        uint8_t r = ready();
-        if(r != 0) return r;
-    }
-    //clean up in case timeout occured
-    DBG("#DEBUG# response timeout!");
-    _ready = 1;
-    _state = IDLE;
-    _buffer = ""; //clean buffer in case we got some bytes but didn't complete in time
-    return -1;
-}
-
 
 uint8_t ModemClass::ready()
 {
@@ -251,31 +258,41 @@ void ModemClass::poll()
 {
     while(_uart->available()){
         char c = _uart->read();
-        switch(_urcState){
-        default:
-        //############################################################################ CASE URC STATE
-        case URC_IDLE:
-            switch(_state){
+        switch(_atCommandState){
             default:
-            //############################################################################ CASE STATE
-            case IDLE:
-                _buffer += c;
-                checkUrc();
-                break;
-            //############################################################################ CASE STATE
-            case RECV_EXP:
-                _buffer += c;
-                if (_buffer.endsWith(_expected)){
-                    _ready = 1;
-                    _state = IDLE;
-                    _buffer = "";
-                    break;
+            case AT_IDLE:
+                if ((_buffer + c).startsWith("AT")){
+                    _buffer += c;
+                    if (_buffer.endsWith("\r\n")){
+                        _atCommandState = AT_RECV_RESPONSE;
+                        //it is guaranteed that modem will never respond with an URC after he echoes the AT command
+                        _buffer.trim();
+                        DBG("#DEBUG# command sent: \"", _buffer, "\"");
+                        _buffer = "";
+                    }
                 }
-                checkUrc();
+                else{
+                    switch(_urcState){
+                        default:
+                        case URC_IDLE:
+                            _buffer += c;
+                            checkUrc();
+                            break;
+                        case URC_RECV_SOCK_CHUNK:
+                            if(--_chunkLen <= 0){
+                                //done receiving chunk
+                                _lastResponseOrUrcMillis = millis();
+                                _urcState = URC_IDLE;
+                                _ready = 1;
+                                streamSkipUntil('\n');
+                            }
+                            //send to correct socket!
+                            _sockets[_sock]->handleUrc(&c, 1);
+                            break;
+                    }
+                }
                 break;
-            //############################################################################ CASE STATE
-            case RECV_RESP:
-                _buffer += c;
+            case AT_RECV_RESPONSE:
                 int responseResultIndex;
                 #ifdef GSM_DEBUG
                     String error;
@@ -319,28 +336,10 @@ void ModemClass::poll()
                         *_responseDataStorage = _buffer;
                     }
                     _buffer = ""; 
-                    _state = IDLE;
+                    _atCommandState = AT_IDLE;
                     break;
                 }
-                break;
-                checkUrc();
-            } //end switch _state
-            break;
-        //############################################################################ CASE URC_STATE
-        case URC_RECV_SOCK_CHUNK:
-            if(--_chunkLen <= 0){
-                //done receiving chunk
-                _lastResponseOrUrcMillis = millis();
-                _urcState = URC_IDLE;
-                if (_state == IDLE) _ready = 1;
-                else _ready = 0;
-                streamSkipUntil('\n');
-            }
-            //send to correct socket!
-            _sockets[_sock]->handleUrc(&c, 1);
-            break;
-        //############################################################################ CASE URC_STATE
-        } //end switch _urcState
+        } //end switch _atCommandState
     } //end while
 }
 
@@ -379,15 +378,13 @@ void ModemClass::checkUrc()
         _buffer = "";
     }
     //############################################################################
-    else if (_buffer.endsWith("+CREG") || _buffer.endsWith("+CPIN")) {
-        
-    }
     else if(_buffer.endsWith("\r\n") && _buffer.startsWith("\r\n+")){
         _buffer.trim();
         _lastResponseOrUrcMillis = millis();
         DBG("#DEBUG# unhandled URC received: ", _buffer);
         _buffer = "";
     }
+    //############################################################################
     else{
         _buffer.trim();
         if (_buffer.length())

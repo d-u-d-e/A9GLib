@@ -93,7 +93,6 @@ public:
 
 
     int waitForResponse(unsigned long timeout = 100L, String* responseDataStorage = NULL);
-    int waitForResponse(String& expected, unsigned long timeout);
     void poll();
     void checkUrc();
     uint8_t ready();
@@ -110,13 +109,11 @@ private:
     bool _init;
     uint16_t _chunkLen;
     uint8_t _sock; //socket that will receive the chunk
-
     void beginSend();
-    
     #define MAX_SOCKETS 3
     GSM_Socket* _sockets[MAX_SOCKETS] = {NULL};
     uint8_t _initSocks;
-
+    
     enum 
     {
         URC_IDLE,
@@ -125,18 +122,15 @@ private:
 
     enum
     {
-        IDLE,
-        RECV_RESP,
-        RECV_EXP
-    } _state;
+        AT_IDLE,
+        AT_RECV_RESP
+    } _atCommandState;
 
     uint8_t _ready;
     String _buffer;
     String* _responseDataStorage;
     #define MAX_URC_HANDLERS 1
     ModemUrcHandler* _urcHandlers[MAX_URC_HANDLERS] = {NULL};
-    String _expected;
-
 };
 
 extern ModemClass MODEM;
