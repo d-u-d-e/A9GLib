@@ -102,7 +102,7 @@ public:
     void removeUrcHandler(ModemUrcHandler* handler);
     void addUrcHandler(ModemUrcHandler* handler);
     bool turnEcho(bool on);    
-    bool streamSkipUntil(const char& c, String* save = NULL, const uint32_t timeout_ms = 1000L);
+    bool streamSkipUntil(const char& c, String* save = NULL, const uint32_t timeout_ms = 10000L);
     int16_t streamGetIntBefore(const char& lastChar);
 
 

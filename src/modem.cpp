@@ -56,6 +56,8 @@ bool ModemClass::init()
         send(F("AT+CMPROMPT=2")); //turn off TCP prompt ">" and "SEND OK" response, maybe use =0 which only removes the prompt TODO
         //it is showed after using AT+CIPSEND=<mux>,<size>
 
+        waitForResponse();
+        
         //check if baud can be set higher than default 115200
 
         if (_baud > 115200){
@@ -250,6 +252,7 @@ void ModemClass::poll()
 {
     while(_uart->available()){
         char c = _uart->read();
+        //DBG("#DEBUG#", c);
         switch(_atCommandState){
             default:
             case AT_IDLE:
@@ -258,8 +261,7 @@ void ModemClass::poll()
                     if (_buffer.endsWith("\r\n")){
                         _atCommandState = AT_RECV_RESP;
                         //it is guaranteed that modem will never respond with an URC after he echoes the AT command
-                        _buffer.trim();
-                        DBG("#DEBUG# command sent: \"", _buffer, "\"");
+                        DBG("#DEBUG# command sent: \"", _buffer.substring(0, _buffer.length() - 2), "\"");
                         _buffer = "";
                     }
                 }
@@ -285,6 +287,7 @@ void ModemClass::poll()
                 }
                 break;
             case AT_RECV_RESP:
+                _buffer += c;
                 int responseResultIndex;
                 #ifdef GSM_DEBUG
                     String error;
@@ -353,8 +356,9 @@ inline bool ModemClass::streamSkipUntil(const char& c, String* save, const uint3
     while (millis() - startMillis < timeout_ms){
         while (_uart->available()){
             char r = _uart->read();
+            DBG("#DEBUG#", r);
             if (save != NULL) *save += r; 
-            if (_uart->read() == c) return true;
+            if (r == c) return true;
         }
     }
     return false;
@@ -370,17 +374,19 @@ void ModemClass::checkUrc()
         _buffer = "";
     }
     //############################################################################
-    else if(_buffer.endsWith("\r\n") && _buffer.startsWith("\r\n+")){
-        _buffer.trim();
+    else if(_buffer.endsWith("\r\n") && _buffer.length() > 2){
         _lastResponseOrUrcMillis = millis();
-        DBG("#DEBUG# unhandled URC received: ", _buffer);
-        _buffer = "";
-    }
-    //############################################################################
-    else{
-        _buffer.trim();
-        if (_buffer.length())
-            DBG("#DEBUG# unhandled data: ", _buffer);
+        #ifdef GSM_DEBUG
+        //can get URC not starting with \r\n? TODO
+        if (_buffer.startsWith("\r\n+") || _buffer.startsWith("+")){
+            _buffer.trim();
+            DBG("#DEBUG# unhandled URC received: \"", _buffer, "\"");
+        }
+        else {
+           _buffer.trim();
+           DBG("#DEBUG# unhandled data: \"", _buffer, "\"");
+        }
+        #endif
         _buffer = "";
     }
     //############################################################################
