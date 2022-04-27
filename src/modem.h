@@ -97,14 +97,16 @@ public:
     void poll();
     void checkUrc();
     uint8_t ready();
-    void setResponseDataStorage(String* responseDataStorage);
     void setBaudRate(unsigned long baud);
     void removeUrcHandler(ModemUrcHandler* handler);
     void addUrcHandler(ModemUrcHandler* handler);
     bool turnEcho(bool on);    
     bool streamSkipUntil(const char& c, String* save = NULL, const uint32_t timeout_ms = 10000L);
     int16_t streamGetIntBefore(const char& lastChar);
-
+    inline void setResponseDataStorage(String* dest)
+    {
+        _responseDataStorage = dest;
+    }
 
 private:
     Uart* _uart;

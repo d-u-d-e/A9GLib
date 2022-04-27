@@ -53,8 +53,7 @@ bool ModemClass::init()
         #endif
         if(waitForResponse() != 1) return false;
 
-        send(F("AT+CMPROMPT=2")); //turn off TCP prompt ">" and "SEND OK" response, maybe use =0 which only removes the prompt TODO
-        //it is showed after using AT+CIPSEND=<mux>,<size>
+        send(F("AT+CIPSPRT=0")); //turn off TCP prompt ">" 
 
         waitForResponse();
         
@@ -356,7 +355,7 @@ inline bool ModemClass::streamSkipUntil(const char& c, String* save, const uint3
     while (millis() - startMillis < timeout_ms){
         while (_uart->available()){
             char r = _uart->read();
-            DBG("#DEBUG#", r);
+            //DBG("#DEBUG#", r);
             if (save != NULL) *save += r; 
             if (r == c) return true;
         }
@@ -365,7 +364,7 @@ inline bool ModemClass::streamSkipUntil(const char& c, String* save, const uint3
 }
 void ModemClass::checkUrc()
 {
-    //############################################################################
+    //############################################################################ +CIPRCV
     if (_buffer.endsWith("+CIPRCV,")){
         _sock = streamGetIntBefore(',');
         _chunkLen = streamGetIntBefore(':');
@@ -373,11 +372,11 @@ void ModemClass::checkUrc()
         _ready = 0;
         _buffer = "";
     }
-    //############################################################################
+    //############################################################################ UNHANDLED
     else if(_buffer.endsWith("\r\n") && _buffer.length() > 2){
         _lastResponseOrUrcMillis = millis();
         #ifdef GSM_DEBUG
-        //can get URC not starting with \r\n? TODO
+        //can get URC not starting with \r\n+ but only with +
         if (_buffer.startsWith("\r\n+") || _buffer.startsWith("+")){
             _buffer.trim();
             DBG("#DEBUG# unhandled URC received: \"", _buffer, "\"");
