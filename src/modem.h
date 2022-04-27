@@ -70,6 +70,7 @@ class ModemClass
 {
 public:
     friend class GPRS;
+    friend class GSM_Socket;
     ModemClass(Uart& uart, unsigned long baud);
     bool init();
     bool powerOff();
@@ -100,6 +101,10 @@ public:
     void setBaudRate(unsigned long baud);
     void removeUrcHandler(ModemUrcHandler* handler);
     void addUrcHandler(ModemUrcHandler* handler);
+    bool turnEcho(bool on);    
+    bool streamSkipUntil(const char& c, String* save = NULL, const uint32_t timeout_ms = 1000L);
+    int16_t streamGetIntBefore(const char& lastChar);
+
 
 private:
     Uart* _uart;

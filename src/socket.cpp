@@ -64,7 +64,7 @@ uint16_t GSM_Socket::send(const void* buff, uint16_t len)
     //if not remove this line!
     if (resp != 1) return 0;
     if (!MODEM.turnEcho(false)) return 0;
-    MODEM._atCommandState = AT_RECV_RESP;
+    MODEM._atCommandState = ModemClass::AT_RECV_RESP;
     MODEM.write(reinterpret_cast<const uint8_t*>(buff), len);
     MODEM.write(0x1A); //tell modem to send
     MODEM.flush();

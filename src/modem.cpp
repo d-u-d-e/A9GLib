@@ -9,7 +9,9 @@ ModemClass::ModemClass(Uart& uart, unsigned long baud):
     _init(false),
     _ready(1),
     _responseDataStorage(NULL),
-    _initSocks(0)
+    _initSocks(0),
+    _atCommandState(AT_IDLE)
+
 {
     _buffer.reserve(64); //reserve 64 chars
 }
@@ -132,16 +134,6 @@ void ModemClass::noLowPowerMode()
     digitalWrite(GSM_LOW_PWR_PIN, HIGH);
 }
 
-uint16_t ModemClass::write(uint8_t c)
-{
-    //here we disable the echo mode, because this is not intended to be used as a send method!
-    bool res1 = turnEcho(false);
-    _uart->write(c);
-    bool res2 = turnEcho(true);
-    if (res1 == true && res2 == true) return 1;
-    else return 0;
-}
-
 bool ModemClass::turnEcho(bool on)
 {
     sendf("ATE%d", on? 1:0);
@@ -243,7 +235,7 @@ int ModemClass::waitForResponse(unsigned long timeout, String* responseDataStora
     DBG("#DEBUG# response timeout!");
     _responseDataStorage = NULL;
     _ready = 1;
-    _state = AT_IDLE;
+    _atCommandState = AT_IDLE;
     _buffer = ""; //clean buffer in case we got some bytes but didn't complete in time
     return -1;
 }
@@ -264,7 +256,7 @@ void ModemClass::poll()
                 if ((_buffer + c).startsWith("AT")){
                     _buffer += c;
                     if (_buffer.endsWith("\r\n")){
-                        _atCommandState = AT_RECV_RESPONSE;
+                        _atCommandState = AT_RECV_RESP;
                         //it is guaranteed that modem will never respond with an URC after he echoes the AT command
                         _buffer.trim();
                         DBG("#DEBUG# command sent: \"", _buffer, "\"");
@@ -292,7 +284,7 @@ void ModemClass::poll()
                     }
                 }
                 break;
-            case AT_RECV_RESPONSE:
+            case AT_RECV_RESP:
                 int responseResultIndex;
                 #ifdef GSM_DEBUG
                     String error;
@@ -312,12 +304,12 @@ void ModemClass::poll()
                 }
                 #ifdef GSM_DEBUG
                 else if (_buffer.endsWith(GSM_CME_ERROR)){
-                    streamSkipUntil('\n', error);
+                    streamSkipUntil('\n', &error);
                     _ready = 3;
                     response = GSM_CME_ERROR + error; 
                 }
                 else if (_buffer.endsWith(GSM_CMS_ERROR)){
-                    streamSkipUntil('\n', error);
+                    streamSkipUntil('\n', &error);
                     _ready = 4;
                     response = GSM_CMS_ERROR + error; 
                 }
@@ -343,7 +335,7 @@ void ModemClass::poll()
     } //end while
 }
 
-inline int16_t ModemClass::streamGetIntBefore(char lastChar)
+inline int16_t ModemClass::streamGetIntBefore(const char& lastChar)
 {
     char buf[7];
     int16_t bytesRead = _uart->readBytesUntil(lastChar, buf, 7);
@@ -355,13 +347,13 @@ inline int16_t ModemClass::streamGetIntBefore(char lastChar)
     return -999;
 }
 
-inline bool ModemClass::streamSkipUntil(const char c, String* save = NULL, const uint32_t timeout_ms = 1000L)
+inline bool ModemClass::streamSkipUntil(const char& c, String* save, const uint32_t timeout_ms)
 {
     uint32_t startMillis = millis();
     while (millis() - startMillis < timeout_ms){
         while (_uart->available()){
-            char c = _uart->read();
-            if (save != NULL) *save += c; 
+            char r = _uart->read();
+            if (save != NULL) *save += r; 
             if (_uart->read() == c) return true;
         }
     }
