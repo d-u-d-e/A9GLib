@@ -54,7 +54,6 @@ bool ModemClass::init()
         if(waitForResponse() != 1) return false;
 
         send(F("AT+CIPSPRT=0")); //turn off TCP prompt ">" 
-
         waitForResponse();
         
         //check if baud can be set higher than default 115200
@@ -249,15 +248,16 @@ uint8_t ModemClass::ready()
 
 void ModemClass::poll()
 {
+    DBG("*** POLL");
     while(_uart->available()){
         char c = _uart->read();
+        _buffer += c;
         //DBG("#DEBUG#", c);
         switch(_atCommandState){
             default:
             case AT_IDLE:
-                if ((_buffer + c).startsWith("AT")){
-                    _buffer += c;
-                    if (_buffer.endsWith("\r\n")){
+                if (_buffer.startsWith("AT")){
+                    if (c == '\n'){
                         _atCommandState = AT_RECV_RESP;
                         //it is guaranteed that modem will never respond with an URC after he echoes the AT command
                         DBG("#DEBUG# command sent: \"", _buffer.substring(0, _buffer.length() - 2), "\"");
@@ -268,10 +268,10 @@ void ModemClass::poll()
                     switch(_urcState){
                         default:
                         case URC_IDLE:
-                            _buffer += c;
                             checkUrc();
                             break;
                         case URC_RECV_SOCK_CHUNK:
+                            _buffer = "";
                             if(--_chunkLen <= 0){
                                 //done receiving chunk
                                 _lastResponseOrUrcMillis = millis();
@@ -286,7 +286,6 @@ void ModemClass::poll()
                 }
                 break;
             case AT_RECV_RESP:
-                _buffer += c;
                 int responseResultIndex;
                 #ifdef GSM_DEBUG
                     String error;
@@ -330,6 +329,7 @@ void ModemClass::poll()
                         *_responseDataStorage = _buffer;
                     }
                     _buffer = ""; 
+                    _responseDataStorage = NULL;
                     _atCommandState = AT_IDLE;
                     break;
                 }
