@@ -64,18 +64,10 @@ uint16_t GSM_Socket::send(const void* buff, uint16_t len)
     //if not remove this line!
     if (resp != 1) return 0;
     if (!MODEM.turnEcho(false)) return 0;
+    MODEM._atCommandState = AT_RECV_RESP;
     MODEM.write(reinterpret_cast<const uint8_t*>(buff), len);
     MODEM.write(0x1A); //tell modem to send
     MODEM.flush();
-    uint8_t r;
-    uint32_t start = millis();
-    while (millis() - start < 10000L && !(r = MODEM.ready())) {}
-    if (!r) return 0;
-    //make sure modem is ready and not parsing URC
-    //maybe change logic so that we dont need to change its state!
-    //here it is not 100% guaranteed it will not issue any URC, though very not likely! TODO
-    //for example let the modem echo the buffer, and skip all of it until 0x1A is read (after len bytes)
-    MODEM._atCommandState = AT_RECV_RESP;
     resp = MODEM.waitForResponse(10000L); //does this read SEND OK? Or OK? TODO
     MODEM.turnEcho(true);
     if (resp != 1) return 0;
