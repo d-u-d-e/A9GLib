@@ -248,44 +248,58 @@ uint8_t ModemClass::ready()
 
 void ModemClass::poll()
 {
-    DBG("*** POLL");
+    //DBG("*** POLL");
     while(_uart->available()){
         char c = _uart->read();
         _buffer += c;
-        //DBG("#DEBUG#", c);
+        //DBG("#DEBUG CHAR#", c);
         switch(_atCommandState){
+            case AT_RECV_COMMAND:{
+                if (c == '\n'){
+                    _atCommandState = AT_RECV_RESP;
+                    //it is guaranteed that modem will never respond with an URC after he echoes the AT command
+                    DBG("#DEBUG# command sent: \"AT", _buffer.substring(0, _buffer.length() - 2), "\"");
+                    _buffer = "";
+                }
+                break;
+            }
             default:
-            case AT_IDLE:
-                if (_buffer.startsWith("AT")){
-                    if (c == '\n'){
-                        _atCommandState = AT_RECV_RESP;
-                        //it is guaranteed that modem will never respond with an URC after he echoes the AT command
-                        DBG("#DEBUG# command sent: \"", _buffer.substring(0, _buffer.length() - 2), "\"");
-                        _buffer = "";
-                    }
+            case AT_IDLE:{
+                if (_buffer.endsWith("AT")){
+                    _buffer = "";
+                    _atCommandState = AT_RECV_COMMAND;
+                    break;
                 }
                 else{
                     switch(_urcState){
                         default:
-                        case URC_IDLE:
+                        case URC_IDLE:{
                             checkUrc();
                             break;
-                        case URC_RECV_SOCK_CHUNK:
+                        }
+                        case URC_RECV_SOCK_CHUNK:{
                             _buffer = "";
+                            //send to correct socket!
+                            _sockets[_sock]->handleUrc(&c, 1);
                             if(--_chunkLen <= 0){
                                 //done receiving chunk
                                 _lastResponseOrUrcMillis = millis();
                                 _urcState = URC_IDLE;
                                 _ready = 1;
-                                streamSkipUntil('\n');
+                                bool skip = streamSkipUntil('\n');
+                                #ifdef GSM_DEBUG
+                                if (!skip){
+                                    DBG("#DEBUG# TCP missing END mark!");
+                                }
+                                #endif
                             }
-                            //send to correct socket!
-                            _sockets[_sock]->handleUrc(&c, 1);
                             break;
+                        }
                     }
                 }
                 break;
-            case AT_RECV_RESP:
+            }
+            case AT_RECV_RESP:{
                 int responseResultIndex;
                 #ifdef GSM_DEBUG
                     String error;
@@ -333,35 +347,11 @@ void ModemClass::poll()
                     _atCommandState = AT_IDLE;
                     break;
                 }
+            }
         } //end switch _atCommandState
     } //end while
 }
 
-inline int16_t ModemClass::streamGetIntBefore(const char& lastChar)
-{
-    char buf[7];
-    int16_t bytesRead = _uart->readBytesUntil(lastChar, buf, 7);
-    if (bytesRead && bytesRead < 7) {
-        buf[bytesRead] = '\0';
-        int16_t res = atoi(buf);
-        return res;
-    }
-    return -999;
-}
-
-inline bool ModemClass::streamSkipUntil(const char& c, String* save, const uint32_t timeout_ms)
-{
-    uint32_t startMillis = millis();
-    while (millis() - startMillis < timeout_ms){
-        while (_uart->available()){
-            char r = _uart->read();
-            //DBG("#DEBUG#", r);
-            if (save != NULL) *save += r; 
-            if (r == c) return true;
-        }
-    }
-    return false;
-}
 void ModemClass::checkUrc()
 {
     //############################################################################ +CIPRCV
@@ -389,6 +379,32 @@ void ModemClass::checkUrc()
         _buffer = "";
     }
     //############################################################################
+}
+
+inline int16_t ModemClass::streamGetIntBefore(const char& lastChar)
+{
+    char buf[7];
+    int16_t bytesRead = _uart->readBytesUntil(lastChar, buf, 7);
+    if (bytesRead && bytesRead < 7) {
+        buf[bytesRead] = '\0';
+        int16_t res = atoi(buf);
+        return res;
+    }
+    return -999;
+}
+
+inline bool ModemClass::streamSkipUntil(const char& c, String* save, const uint32_t timeout_ms)
+{
+    uint32_t startMillis = millis();
+    while (millis() - startMillis < timeout_ms){
+        while (_uart->available()){
+            char r = _uart->read();
+            //DBG("#DEBUG#", r);
+            if (save != NULL) *save += r; 
+            if (r == c) return true;
+        }
+    }
+    return false;
 }
 
 void ModemClass::setBaudRate(unsigned long baud)

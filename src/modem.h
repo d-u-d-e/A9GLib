@@ -130,6 +130,7 @@ private:
     enum
     {
         AT_IDLE,
+        AT_RECV_COMMAND,
         AT_RECV_RESP
     } _atCommandState;
 

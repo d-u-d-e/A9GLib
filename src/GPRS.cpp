@@ -196,6 +196,7 @@ IPAddress GPRS::getIPAddress()
     String response;
     MODEM.send("AT+CIFSR?");
     if (MODEM.waitForResponse(100, &response) == 1) {
+        response = response.substring(0, response.indexOf("\r")); //remove response code OK
         IPAddress ip;
         if (ip.fromString(response)) {
             return ip;
