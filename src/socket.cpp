@@ -61,10 +61,12 @@ uint16_t GSM_Socket::send(const void* buff, uint16_t len)
     //String prompt(PROMPT);
     if (!MODEM.turnEcho(false)) return 0;
     MODEM.sendf("AT+CIPSEND=%d,%d", _mux, (uint16_t) len); 
+    MODEM._atCommandState = ModemClass::AT_RECV_RESP;
     MODEM.write(reinterpret_cast<const uint8_t*>(buff), len);
     MODEM.write(0x1A); //tell modem to send
     MODEM.flush();
-    resp = MODEM.waitForResponse(10000L); //does this read SEND OK? Or OK? TODO
+    uint8_t resp = MODEM.waitForResponse(60 * 1000); //OK if successfull; what if fail? TODO
+    if (resp != 1) return 0;
     MODEM.turnEcho(true);
     return len;
 }
