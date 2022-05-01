@@ -130,11 +130,11 @@ private:
     enum
     {
         AT_IDLE,
-        AT_RECV_COMMAND,
         AT_RECV_RESP
     } _atCommandState;
 
     uint8_t _ready;
+    bool _sent;
     String _buffer;
     String* _responseDataStorage;
     #define MAX_URC_HANDLERS 1

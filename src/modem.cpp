@@ -8,6 +8,7 @@ ModemClass::ModemClass(Uart& uart, unsigned long baud):
     _lastResponseOrUrcMillis(0),
     _init(false),
     _ready(1),
+	_sent(false),
     _responseDataStorage(NULL),
     _initSocks(0),
     _atCommandState(AT_IDLE)
@@ -187,6 +188,7 @@ void ModemClass::send(const char* command)
 
 
     _ready = 0;
+	_sent = true;
     _atCommandState = AT_IDLE;
     _uart->println(command);
     _uart->flush();
@@ -207,6 +209,7 @@ void ModemClass::send(__FlashStringHelper* command)
     }
 
     _ready = 0;
+	_sent = true;
     _atCommandState = AT_IDLE;
     _uart->println(command);
     _uart->flush();
@@ -236,6 +239,7 @@ int ModemClass::waitForResponse(unsigned long timeout, String* responseDataStora
     _responseDataStorage = NULL;
     _ready = 1;
     _atCommandState = AT_IDLE;
+	_sent = false;
     _buffer = ""; //clean buffer in case we got some bytes but didn't complete in time
     return -1;
 }
@@ -254,20 +258,15 @@ void ModemClass::poll()
         _buffer += c;
         //DBG("#DEBUG CHAR#", c);
         switch(_atCommandState){
-            case AT_RECV_COMMAND:{
-                if (c == '\n'){
-                    _atCommandState = AT_RECV_RESP;
-                    //it is guaranteed that modem will never respond with an URC after he echoes the AT command
-                    DBG("#DEBUG# command sent: \"AT", _buffer.substring(0, _buffer.length() - 2), "\"");
-                    _buffer = "";
-                }
-                break;
-            }
             default:
             case AT_IDLE:{
-                if (_buffer.endsWith("AT")){
+                if (_sent && _buffer.startsWith("AT") && _buffer.endsWith("\r\n")){ //we use _sent check in case some URC contains the AT string!
                     _buffer = "";
-                    _atCommandState = AT_RECV_COMMAND;
+                    _atCommandState = AT_RECV_RESP;
+                    //it is guaranteed that modem will never respond with an URC after he echoes the AT command
+                    DBG("#DEBUG# command sent: \"", _buffer.substring(0, _buffer.length() - 2), "\"");
+                    _buffer = "";
+                    _sent = false;
                     break;
                 }
                 else{
