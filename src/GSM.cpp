@@ -103,10 +103,10 @@ uint8_t GSM::ready()
             _readyState = READY_STATE_CHECK_SIM;
             ready = 0;
         } else {
-            if (_response.endsWith("READY")) {
+            if (_response.indexOf("READY") != -1) {
                 _readyState = READY_STATE_SET_PREFERRED_MESSAGE_FORMAT;
                 ready = 0;
-            } else if (_response.endsWith("SIM PIN")) {
+            } else if (_response.indexOf("SIM PIN") != -1) {
                 _readyState = READY_STATE_UNLOCK_SIM;
                 ready = 0;
             } else {
