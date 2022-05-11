@@ -26,14 +26,14 @@ GSM::GSM():
 {
 }
 
-NetworkStatus GSM::init(const char* pin, bool restart, uint32_t timeout)
+NetworkStatus GSM::init(const char* pin, bool restart, uint32_t timeout_ms)
 {
     if ((restart && !MODEM.restart()) || (!restart && !MODEM.init())) {
         _state = ERROR;
     } else{
         _pin = pin;
         _readyState = READY_STATE_CHECK_SIM;
-        _timeout = timeout;
+        _timeout = timeout_ms;
 
         unsigned long start = millis();
         while (ready() == 0) {
@@ -145,7 +145,7 @@ uint8_t GSM::ready()
                 ready = 1;
             } else if (status == 2) {
                 _readyState = READY_STATE_CHECK_REGISTRATION;
-                _state = CONNECTING;
+                _state = GSM_CONNECTING;
                 ready = 0;
             } else if (status == 3) {
                 _state = ERROR;
@@ -234,18 +234,18 @@ NetworkStatus GSM::status()
     return _state;
 }
 
-int8_t GSM::getSignalQuality(unsigned long timeout)
+int8_t GSM::getSignalQuality(uint32_t timeout_ms)
 {
     MODEM.send(F("AT+CSQ"));
     String response;
-    uint8_t result = MODEM.waitForResponse(timeout, response);
+    uint8_t result = MODEM.waitForResponse(timeout_ms, response);
     if (result != 1) return 99;
     else{
         return 2*(atoi(response.c_str() + 6)-2) - 109; //result in dBm
     }
 }
 
-const char * GSM::signal2String(int8_t signalQuality)
+const char* GSM::signal2String(int8_t signalQuality)
 {
     if(signalQuality < -100){
         return GSM_W_SIGNAL;
@@ -260,9 +260,9 @@ const char * GSM::signal2String(int8_t signalQuality)
         return GSM_E_SIGNAL;
 }
 
-bool GSM::waitForNetwork(unsigned long timeout, int8_t * signal)
+bool GSM::waitForNetwork(uint32_t timeout_ms, int8_t* signal)
 {
-    for (unsigned long start = millis(); millis() - start < timeout;) {
+    for (unsigned long start = millis(); millis() - start < timeout_ms;) {
         if (isAccessAlive()){
             if (signal != NULL){
                 *signal = getSignalQuality();

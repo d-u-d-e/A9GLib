@@ -217,7 +217,7 @@ uint8_t ModemClass::waitForResponse(uint32_t timeout, String& data, GsmConstStr 
             else if (r3 && data.endsWith(r3)){
                 #ifdef GSM_DEBUG
                 if (r3 == GFP(GSM_CME_ERROR))
-                    streamSkipUntil('\n');
+                    streamSkipUntil('\n', &data);
                 #endif
                 index = 3;
                 goto finish;
@@ -247,7 +247,8 @@ uint8_t ModemClass::waitForResponse(uint32_t timeout, String& data, GsmConstStr 
         }
         data.trim();
         //TODO to print better results, maybe replace all occuring \n, \r with \\n \\r
-        DBG("#DEBUG# response received:", "\"", data, "\"");
+        DBG("#DEBUG# response received:", "\"", data, "\""); //could contain trash other than our expected response TODO
+        //such as URC or other data
     }
     return index;
 }
@@ -255,12 +256,14 @@ uint8_t ModemClass::waitForResponse(uint32_t timeout, String& data, GsmConstStr 
 uint8_t ModemClass::waitForResponse(uint32_t timeout, GsmConstStr r1, GsmConstStr r2, 
                                    GsmConstStr r3, GsmConstStr r4, GsmConstStr r5)
 {
+    //don't care to save response
     String data;
     return waitForResponse(timeout, data, r1, r2, r3, r4, r5);
 }
 
 void ModemClass::poll()
 {
+    //make the modem poll new data, which is not an expected response
     while(_uart->available()){
         char c = _uart->read();
         switch(_urcState){

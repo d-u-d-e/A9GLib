@@ -61,6 +61,8 @@ typedef const __FlashStringHelper* GsmConstStr;
 #define GFP(x) (reinterpret_cast<GsmConstStr>(x))
 #define GF(x) F(x)
 
+enum NetworkStatus {ERROR, GSM_CONNECTING, GPRS_CONNECTING, GSM_READY, GSM_OFF, GPRS_ON, GPRS_OFF};
+
 class GSM_Socket;
 class GPRS;
 
