@@ -50,8 +50,8 @@ NetworkStatus GSM::init(const char* pin, bool restart, uint32_t timeout)
 bool GSM::isAccessAlive()
 {
     String response;
-    MODEM.send("AT+CREG?");
-    if (MODEM.waitForResponse(100, &response) == 1) {
+    MODEM.send(GF("AT+CREG?"));
+    if (MODEM.waitForResponse(100, response) == 1) {
         int status = response.charAt(response.indexOf(',') + 1) - '0';
         if (status == 1 || status == 5) {
             return true;

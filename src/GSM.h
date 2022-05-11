@@ -11,7 +11,7 @@ class GSM {
 
 public:
     GSM();
-    NetworkStatus init(const char* pin = 0, bool restart = false, bool synchronous = true);
+    NetworkStatus init(const char* pin = 0, bool restart = false, uint32_t timeout = 60 * 1000);
     bool isAccessAlive();
     bool shutdown();
     uint8_t ready();

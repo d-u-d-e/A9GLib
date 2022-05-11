@@ -87,9 +87,10 @@ public:
     uint16_t write(uint8_t c);
     uint16_t write(const uint8_t* buf, uint16_t len);
     void flush();
-    void send(__FlashStringHelper* command);
+    void send(const __FlashStringHelper* command);
     void sendf(const char* fmt, ...);
-    int8_t waitForResponse(uint32_t timeout = 1000L,
+    void send(const char* cmd);
+    uint8_t waitForResponse(uint32_t timeout, String& data,
                                    GsmConstStr r1 = GFP(GSM_OK),
                                    GsmConstStr r2 = GFP(GSM_ERROR),
                                    #ifdef GSM_DEBUG
@@ -99,8 +100,21 @@ public:
                                    GsmConstStr r3 = NULL,
                                    GsmConstStr r4 = NULL,
                                    #endif
-                                   GsmConstStr r5 = NULL)
+                                   GsmConstStr r5 = NULL);
+
+    uint8_t waitForResponse(uint32_t timeout = 1000,
+                                   GsmConstStr r1 = GFP(GSM_OK),
+                                   GsmConstStr r2 = GFP(GSM_ERROR),
+                                   #ifdef GSM_DEBUG
+                                   GsmConstStr r3 = GFP(GSM_CME_ERROR),
+                                   GsmConstStr r4 = GFP(GSM_CMS_ERROR),
+                                   #else
+                                   GsmConstStr r3 = NULL,
+                                   GsmConstStr r4 = NULL,
+                                   #endif
+                                   GsmConstStr r5 = NULL);
     void poll();
+    void checkUrc();
     void setBaudRate(unsigned long baud);
     void removeUrcHandler(ModemUrcHandler* handler);
     void addUrcHandler(ModemUrcHandler* handler);

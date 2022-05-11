@@ -7,8 +7,7 @@ ModemClass::ModemClass(Uart& uart, unsigned long baud):
     _lowPowerMode(false),
     _lastResponseOrUrcMillis(0),
     _init(false),
-	_sent(false),
-    _initSocks(0),
+    _initSocks(0)
 {
     _buffer.reserve(64); //reserve 64 chars
 }
@@ -122,6 +121,11 @@ bool ModemClass::noop()
     return (waitForResponse() == 1);
 }
 
+void ModemClass::flush()
+{
+    _uart->flush();
+}
+
 void ModemClass::lowPowerMode()
 {
     _lowPowerMode = true;
@@ -144,7 +148,7 @@ uint16_t ModemClass::write(const uint8_t* buf, uint16_t size)
     return _uart->write(buf, size);
 }
 
-void ModemClass::send(GsmConstStr command)
+void ModemClass::send(GsmConstStr cmd)
 {
     if (_lowPowerMode){
         digitalWrite(GSM_LOW_PWR_PIN, HIGH); //turn off low power mode if on
@@ -158,8 +162,27 @@ void ModemClass::send(GsmConstStr command)
         delay(MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS - delta);
     }
 
-    DBG("#DEBUG# command sent: \"", command, "\"");
-    _uart->println(command);
+    DBG("#DEBUG# command sent: \"", cmd, "\"");
+    _uart->println(cmd);
+    _uart->flush();
+}
+
+void ModemClass::send(const char* cmd)
+{
+    if (_lowPowerMode){
+        digitalWrite(GSM_LOW_PWR_PIN, HIGH); //turn off low power mode if on
+        delay(5);
+    }
+
+    // compare the time of the last response or URC and ensure
+    // at least 20ms have passed before sending a new command
+    unsigned long delta = millis() - _lastResponseOrUrcMillis;
+    if(delta < MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS){
+        delay(MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS - delta);
+    }
+
+    DBG("#DEBUG# command sent: \"", cmd, "\"");
+    _uart->println(cmd);
     _uart->flush();
 }
 
@@ -173,7 +196,7 @@ void ModemClass::sendf(const char *fmt, ...)
     send(buf);
 }
 
-int8_t ModemClass::waitForResponse(uint32_t timeout, String& data, GsmConstStr r1, GsmConstStr r2,
+uint8_t ModemClass::waitForResponse(uint32_t timeout, String& data, GsmConstStr r1, GsmConstStr r2,
                                    GsmConstStr r3, GsmConstStr r4, GsmConstStr r5)
 {
     data.reserve(64);
@@ -229,14 +252,14 @@ int8_t ModemClass::waitForResponse(uint32_t timeout, String& data, GsmConstStr r
     return index;
 }
 
-int8_t ModemClass::waitForResponse(uint32_t timeout, GsmConstStr r1, GsmConstStr r2, 
+uint8_t ModemClass::waitForResponse(uint32_t timeout, GsmConstStr r1, GsmConstStr r2, 
                                    GsmConstStr r3, GsmConstStr r4, GsmConstStr r5)
 {
     String data;
     return waitForResponse(timeout, data, r1, r2, r3, r4, r5);
 }
 
-void poll()
+void ModemClass::poll()
 {
     while(_uart->available()){
         char c = _uart->read();
@@ -254,7 +277,6 @@ void poll()
                     //done receiving chunk
                     _lastResponseOrUrcMillis = millis();
                     _urcState = URC_IDLE;
-                    _ready = 1;
                     bool skip = streamSkipUntil('\n');
                     #ifdef GSM_DEBUG
                     if (!skip){
@@ -275,7 +297,6 @@ void ModemClass::checkUrc()
         _sock = streamGetIntBefore(',');
         _chunkLen = streamGetIntBefore(':');
         _urcState = URC_RECV_SOCK_CHUNK;
-        _ready = 0;
         _buffer = "";
     }
     //############################################################################ UNHANDLED

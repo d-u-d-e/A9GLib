@@ -71,11 +71,7 @@ NetworkStatus GPRS::detachGPRS(bool synchronous)
 
 uint8_t GPRS::ready()
 {
-    uint8_t ready = MODEM.ready();
-
-    if (ready == 0) {
-        return 0;
-    }
+    uint8_t ready = 0;
 
     switch (_readyState) {
     case GPRS_STATE_IDLE:
@@ -195,7 +191,7 @@ IPAddress GPRS::getIPAddress()
 {
     String response;
     MODEM.send("AT+CIFSR?");
-    if (MODEM.waitForResponse(100, &response) == 1) {
+    if (MODEM.waitForResponse(100, response) == 1) {
         response = response.substring(0, response.indexOf("\r")); //remove response code OK
         IPAddress ip;
         if (ip.fromString(response)) {
@@ -228,7 +224,7 @@ bool GPRS::connect(const char* host, uint16_t port, uint8_t* mux, unsigned long 
     
     String response;
     MODEM.sendf("AT+CIPSTART=\"TCP\",\"%s\",%s", host, String(port).c_str());
-    int result = MODEM.waitForResponse(timeout_ms, &response);
+    int result = MODEM.waitForResponse(timeout_ms, response);
     //this response should contain either "CONNECT OK", "CONNECT FAIL", or "ALREADY CONNECT"
 
     if (result == -1){
