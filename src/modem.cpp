@@ -7,16 +7,11 @@ ModemClass::ModemClass(Uart& uart, unsigned long baud):
     _lowPowerMode(false),
     _lastResponseOrUrcMillis(0),
     _init(false),
-    _ready(1),
 	_sent(false),
-    _responseDataStorage(NULL),
     _initSocks(0),
-    _atCommandState(AT_IDLE)
-
 {
     _buffer.reserve(64); //reserve 64 chars
 }
-
 
 //Copy this code before calling init()
 
@@ -40,7 +35,10 @@ bool ModemClass::init()
     if(!_init){
         _uart->begin(_baud > 115200 ? 115200 : _baud);
 
-        send(F("ATV1")); //set verbose mode
+        send(GF("ATE0"));
+        if(waitForResponse() != 1) return false;
+
+        send(GF("ATV1")); //set verbose mode
         if(waitForResponse() != 1) return false;
 
         if (!autosense()){
@@ -48,13 +46,14 @@ bool ModemClass::init()
         }
 
         #ifdef GSM_DEBUG
-        send(F("AT+CMEE=2"));  // turn on verbose error codes
+        send(GF("AT+CMEE=2"));  // turn on verbose error codes
         #else
-        send(F("AT+CMEE=0"));  // turn off error codes
+        send(GF("AT+CMEE=0"));  // turn off error codes
         #endif
         if(waitForResponse() != 1) return false;
 
-        send(F("AT+CIPSPRT=0")); //turn off TCP prompt ">" 
+        //TODO
+        send(GF("AT+CIPSPRT=0")); //turn off TCP prompt ">" 
         waitForResponse();
         
         //check if baud can be set higher than default 115200
@@ -80,7 +79,7 @@ bool ModemClass::init()
 bool ModemClass::restart()
 {
     if(_init){
-        send(F("AT+RST=1"));
+        send(GF("AT+RST=1"));
         return (waitForResponse(1000) == 1);
     }
     else{
@@ -90,7 +89,7 @@ bool ModemClass::restart()
 
 bool ModemClass::factoryReset()
 {
-    send(F("AT&FZ&W"));
+    send(GF("AT&FZ&W"));
     return waitForResponse(1000) == 1;
 }
 
@@ -98,7 +97,7 @@ bool ModemClass::powerOff()
 {
     if(_init){
         _init = false;
-        send(F("AT+CPOF"));
+        send(GF("AT+CPOF"));
         uint8_t stat = waitForResponse();
         _uart->end();
         return stat == 1;
@@ -119,7 +118,7 @@ bool ModemClass::autosense(unsigned int timeout)
 
 bool ModemClass::noop()
 {
-    send(F("AT"));
+    send(GF("AT"));
     return (waitForResponse() == 1);
 }
 
@@ -135,66 +134,17 @@ void ModemClass::noLowPowerMode()
     digitalWrite(GSM_LOW_PWR_PIN, HIGH);
 }
 
-bool ModemClass::turnEcho(bool on)
-{
-    sendf("ATE%d", on? 1:0);
-    uint8_t resp = waitForResponse();
-    if (resp != 1){
-        DBG("#DEBUG# setting echo mode failed!");
-        return false;
-    }
-    return true;
-}
-
 uint16_t ModemClass::write(uint8_t c)
 {
-    //make sure to turn off echo, because this is not intended to be used as a send method!
-    //so we don't want the modem to echo back c
    return _uart->write(c);
 }
 
 uint16_t ModemClass::write(const uint8_t* buf, uint16_t size)
 {
-    //make sure to turn off echo, because this is not intended to be used as a send method!
-    //so we don't want the modem to echo back the content of buffer
     return _uart->write(buf, size);
 }
 
-void ModemClass::flush(){
-    _uart->flush();
-}
-
-void ModemClass::send(const char* command)
-{
-    /* The chain Command -> Response shall always be respected and a new command must not be issued
-    before the module has terminated all the sending of its response result code (whatever it may be).
-    This applies especially to applications that ?sense? the OK text and therefore may send the next
-    command before the complete code <CR><LF>OK<CR><LF> is sent by the module.
-    It is advisable anyway to wait for at least 20ms between the end of the reception of the response and
-    the issue of the next AT command.
-    If the response codes are disabled and therefore the module does not report any response to the
-    command, then at least the 20ms pause time shall be respected.
-    */
-
-    if (_lowPowerMode){
-        digitalWrite(GSM_LOW_PWR_PIN, HIGH); //turn off low power mode if on
-        delay(5);
-    }
-
-    unsigned long delta = millis() - _lastResponseOrUrcMillis;
-    if(delta < MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS){
-        delay(MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS - delta);
-    }
-
-
-    _ready = 0;
-	_sent = true;
-    _atCommandState = AT_IDLE;
-    _uart->println(command);
-    _uart->flush();
-}
-
-void ModemClass::send(__FlashStringHelper* command)
+void ModemClass::send(GsmConstStr command)
 {
     if (_lowPowerMode){
         digitalWrite(GSM_LOW_PWR_PIN, HIGH); //turn off low power mode if on
@@ -208,9 +158,7 @@ void ModemClass::send(__FlashStringHelper* command)
         delay(MODEM_MIN_RESPONSE_OR_URC_WAIT_TIME_MS - delta);
     }
 
-    _ready = 0;
-	_sent = true;
-    _atCommandState = AT_IDLE;
+    DBG("#DEBUG# command sent: \"", command, "\"");
     _uart->println(command);
     _uart->flush();
 }
@@ -225,130 +173,98 @@ void ModemClass::sendf(const char *fmt, ...)
     send(buf);
 }
 
-//call this only after send!
-int ModemClass::waitForResponse(unsigned long timeout, String* responseDataStorage)
+int8_t ModemClass::waitForResponse(uint32_t timeout, String& data, GsmConstStr r1, GsmConstStr r2,
+                                   GsmConstStr r3, GsmConstStr r4, GsmConstStr r5)
 {
-    _responseDataStorage = responseDataStorage;
+    data.reserve(64);
     unsigned long start = millis();
-    while ((millis() - start) < timeout){
-        uint8_t r = ready();
-        if(r != 0) return r;
+    uint8_t index = 0;
+    do{
+        while (_uart->available()) {
+            char c = _uart->read();
+            data += c;
+            if (r1 && data.endsWith(r1)){
+                index = 1;
+                goto finish;
+            }
+            else if (r2 && data.endsWith(r2)){
+                index = 2;
+                goto finish;
+            }
+            else if (r3 && data.endsWith(r3)){
+                #ifdef GSM_DEBUG
+                if (r3 == GFP(GSM_CME_ERROR))
+                    streamSkipUntil('\n');
+                #endif
+                index = 3;
+                goto finish;
+            }
+            else if (r4 && data.endsWith(r4)){
+                index = 4; 
+                goto finish;
+            }
+            else if (r5 && data.endsWith(r5)){
+                index = 5; 
+                goto finish;
+            }
+        }
+    } while (millis() - start < timeout);
+
+    finish:
+    if (!index) {
+        DBG("#DEBUG# response timeout!");
+        data.trim();
+        if (data.length()) { DBG("#DEBUG# unhandled data: \"", data, "\"");}
+        data = "";
     }
-    //clean up in case timeout occured
-    DBG("#DEBUG# response timeout!");
-    _responseDataStorage = NULL;
-    _ready = 1;
-    _atCommandState = AT_IDLE;
-	_sent = false;
-    _buffer = ""; //clean buffer in case we got some bytes but didn't complete in time
-    return -1;
+    else{
+        _lastResponseOrUrcMillis = millis();
+        if (_lowPowerMode){ //after receiving the response, bring back low power mode if it were on
+            digitalWrite(GSM_LOW_PWR_PIN, LOW);
+        }
+        data.trim();
+        //TODO to print better results, maybe replace all occuring \n, \r with \\n \\r
+        DBG("#DEBUG# response received:", "\"", data, "\"");
+    }
+    return index;
 }
 
-uint8_t ModemClass::ready()
+int8_t ModemClass::waitForResponse(uint32_t timeout, GsmConstStr r1, GsmConstStr r2, 
+                                   GsmConstStr r3, GsmConstStr r4, GsmConstStr r5)
 {
-    poll();
-    return _ready;
+    String data;
+    return waitForResponse(timeout, data, r1, r2, r3, r4, r5);
 }
 
-void ModemClass::poll()
+void poll()
 {
-    //DBG("*** POLL");
     while(_uart->available()){
         char c = _uart->read();
-        _buffer += c;
-        //DBG("#DEBUG BUFFER#", _buffer);
-        //DBG("#DEBUG CHAR#", c);
-        switch(_atCommandState){
-            default:
-            case AT_IDLE:{
-                if (_sent && (_buffer.startsWith("AT") || _buffer.startsWith("\r\nAT"))
-                            && _buffer.endsWith("\r\n")){ //we use _sent check in case some URC contains the AT string!
-                    _atCommandState = AT_RECV_RESP;
-                    _buffer.trim();
-                    DBG("#DEBUG# command sent: \"", _buffer, "\"");
-                    _buffer = "";
-                    _sent = false;
-                    break;
-                }
-                else{
-                    switch(_urcState){
-                        default:
-                        case URC_IDLE:{
-                            checkUrc();
-                            break;
-                        }
-                        case URC_RECV_SOCK_CHUNK:{
-                            _buffer = "";
-                            //send to correct socket!
-                            _sockets[_sock]->handleUrc(&c, 1);
-                            if(--_chunkLen <= 0){
-                                //done receiving chunk
-                                _lastResponseOrUrcMillis = millis();
-                                _urcState = URC_IDLE;
-                                _ready = 1;
-                                bool skip = streamSkipUntil('\n');
-                                #ifdef GSM_DEBUG
-                                if (!skip){
-                                    DBG("#DEBUG# TCP missing END mark!");
-                                }
-                                #endif
-                            }
-                            break;
-                        }
+        switch(_urcState){
+            defaut:
+            case URC_IDLE:{
+                _buffer += c;
+                checkUrc();
+                break;
+            }
+            case URC_RECV_SOCK_CHUNK:{
+                //send to correct socket!
+                _sockets[_sock]->handleUrc(&c, 1);
+                if(--_chunkLen <= 0){
+                    //done receiving chunk
+                    _lastResponseOrUrcMillis = millis();
+                    _urcState = URC_IDLE;
+                    _ready = 1;
+                    bool skip = streamSkipUntil('\n');
+                    #ifdef GSM_DEBUG
+                    if (!skip){
+                        DBG("#DEBUG# TCP missing END mark!");
                     }
+                    #endif
                 }
                 break;
             }
-            case AT_RECV_RESP:{
-                int responseResultIndex;
-                #ifdef GSM_DEBUG
-                    String error;
-                    String response;
-                #endif
-                if (_buffer.endsWith(GSM_OK)){
-                    _ready = 1;
-                    #ifdef GSM_DEBUG
-                        response = _buffer;
-                    #endif
-                }
-                else if (_buffer.endsWith(GSM_ERROR)){
-                    _ready = 2;
-                    #ifdef GSM_DEBUG
-                        response = _buffer;
-                    #endif
-                }
-                #ifdef GSM_DEBUG
-                else if (_buffer.endsWith(GSM_CME_ERROR)){
-                    streamSkipUntil('\n', &error);
-                    _ready = 3;
-                    response = GSM_CME_ERROR + error; 
-                }
-                else if (_buffer.endsWith(GSM_CMS_ERROR)){
-                    streamSkipUntil('\n', &error);
-                    _ready = 4;
-                    response = GSM_CMS_ERROR + error; 
-                }
-                #endif
-                if (_ready != 0){ 
-                    _lastResponseOrUrcMillis = millis();
-                    if (_lowPowerMode){ //after receiving the response, bring back low power mode if it were on
-                        digitalWrite(GSM_LOW_PWR_PIN, LOW);
-                    }
-                    #ifdef GSM_DEBUG
-                    response.trim();
-                    DBG("#DEBUG# response received: \"", response, "\"");
-                    #endif
-                    if (_responseDataStorage != NULL){
-                        _buffer.trim();
-                        *_responseDataStorage = _buffer;
-                    }
-                    _buffer = ""; 
-                    _responseDataStorage = NULL;
-                    _atCommandState = AT_IDLE;
-                    break;
-                }
-            }
-        } //end switch _atCommandState
+        } //end switch
     } //end while
 }
 
@@ -373,9 +289,9 @@ void ModemClass::checkUrc()
             DBG("#DEBUG# unhandled URC received: \"", _buffer, "\"");
         }
         else {
-           // DBG("#DEBUG# sent: ", _sent);
            _buffer.trim();
-           DBG("#DEBUG# unhandled data: \"", _buffer, "\"");
+           if (_buffer.length())
+               DBG("#DEBUG# unhandled data: \"", _buffer, "\"");
         }
         #endif
         _buffer = "";

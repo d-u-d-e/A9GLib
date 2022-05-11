@@ -7,13 +7,9 @@
 
 enum {
     READY_STATE_CHECK_SIM,
-    READY_STATE_WAIT_CHECK_SIM_RESPONSE,
     READY_STATE_UNLOCK_SIM,
-    READY_STATE_WAIT_UNLOCK_SIM_RESPONSE,
     READY_STATE_SET_PREFERRED_MESSAGE_FORMAT,
-    READY_STATE_WAIT_SET_PREFERRED_MESSAGE_FORMAT_RESPONSE,
     READY_STATE_CHECK_REGISTRATION,
-    READY_STATE_WAIT_CHECK_REGISTRATION_RESPONSE,
     READY_STATE_IDLE
 };
 
@@ -30,25 +26,22 @@ GSM::GSM():
 {
 }
 
-NetworkStatus GSM::init(const char* pin, bool restart, bool synchronous)
+NetworkStatus GSM::init(const char* pin, bool restart, uint32_t timeout)
 {
     if ((restart && !MODEM.restart()) || (!restart && !MODEM.init())) {
         _state = ERROR;
     } else{
         _pin = pin;
         _readyState = READY_STATE_CHECK_SIM;
+        _timeout = timeout;
 
-        if (synchronous) {
-            unsigned long start = millis();
-            while (ready() == 0) {
-                if (_timeout && !((millis() - start) < _timeout)) {
-                    _state = ERROR;
-                    break;
-                }
-                delay(100);
+        unsigned long start = millis();
+        while (ready() == 0) {
+            if (!((millis() - start) < _timeout)) {
+                _state = ERROR;
+                break;
             }
-        } else {
-            return (NetworkStatus)0;
+            delay(100);
         }
     }
     return _state;
@@ -82,27 +75,12 @@ uint8_t GSM::ready()
         return 2;
     }
 
-    uint8_t ready = MODEM.ready();
-
-    if (ready == 0) {
-        return 0;
-    }
+    uint8_t ready = 0;
 
     switch (_readyState) {
-    case READY_STATE_CHECK_SIM: {
-        MODEM.setResponseDataStorage(&_response);
-        MODEM.send("AT+CPIN?");
-        _readyState = READY_STATE_WAIT_CHECK_SIM_RESPONSE;
-        ready = 0;
-        break;
-    }
-
-    case READY_STATE_WAIT_CHECK_SIM_RESPONSE: {
-        if (ready > 1) {
-            // error => retry
-            _readyState = READY_STATE_CHECK_SIM;
-            ready = 0;
-        } else {
+        case READY_STATE_CHECK_SIM: {
+            MODEM.send(GF("AT+CPIN?"));
+            MODEM.waitForResponse(_timeout, _response); 
             if (_response.indexOf("READY") != -1) {
                 _readyState = READY_STATE_SET_PREFERRED_MESSAGE_FORMAT;
                 ready = 0;
@@ -113,71 +91,51 @@ uint8_t GSM::ready()
                 _state = ERROR;
                 ready = 2;
             }
-        }
-
         break;
     }
 
     case READY_STATE_UNLOCK_SIM: {
         if (_pin != NULL) {
-            MODEM.setResponseDataStorage(&_response);
             MODEM.sendf("AT+CPIN=\"%s\"", _pin);
-
-            _readyState = READY_STATE_WAIT_UNLOCK_SIM_RESPONSE;
-            ready = 0;
+            uint8_t res = MODEM.waitForResponse(_timeout, _response); 
+            if (res != 1) {
+                _state = ERROR;
+                ready = 2;
+            }
+            else{
+                _readyState = READY_STATE_SET_PREFERRED_MESSAGE_FORMAT;
+                ready = 0;
+            }
         } else {
             _state = ERROR;
             ready = 2;
         }
-        break;
-    }
-
-    case READY_STATE_WAIT_UNLOCK_SIM_RESPONSE: {
-        if (ready > 1) {
-            _state = ERROR;
-            ready = 2;
-        } else {
-            _readyState = READY_STATE_SET_PREFERRED_MESSAGE_FORMAT;
-            ready = 0;
-        }
-
         break;
     }
 
     case READY_STATE_SET_PREFERRED_MESSAGE_FORMAT: {
         MODEM.send("AT+CMGF=1");
-        _readyState = READY_STATE_WAIT_SET_PREFERRED_MESSAGE_FORMAT_RESPONSE;
-        ready = 0;
-        break;
-    }
-
-    case READY_STATE_WAIT_SET_PREFERRED_MESSAGE_FORMAT_RESPONSE: {
-        if (ready > 1) {
+        uint8_t res = MODEM.waitForResponse(_timeout, _response); 
+        if (res != 1) {
             _state = ERROR;
             ready = 2;
-        } else {
+        }
+        else{
             _readyState = READY_STATE_CHECK_REGISTRATION;
             ready = 0;
         }
-
         break;
     }
 
     case READY_STATE_CHECK_REGISTRATION: {
-        MODEM.setResponseDataStorage(&_response);
         MODEM.send("AT+CREG?");
-        _readyState = READY_STATE_WAIT_CHECK_REGISTRATION_RESPONSE;
-        ready = 0;
-        break;
-    }
-
-    case READY_STATE_WAIT_CHECK_REGISTRATION_RESPONSE: {
-        if (ready > 1) {
+        uint8_t res = MODEM.waitForResponse(_timeout, _response); 
+        if (res != 1) {
             _state = ERROR;
             ready = 2;
-        } else {
+        }
+        else{
             int status = _response.charAt(_response.indexOf(',') + 1) - '0';
-
             if (status == 0 || status == 4) {
                 _readyState = READY_STATE_CHECK_REGISTRATION;
                 ready = 0;
@@ -196,7 +154,6 @@ uint8_t GSM::ready()
         }
         break;
     }
-
     case READY_STATE_IDLE:{
         break;
     }
@@ -204,11 +161,7 @@ uint8_t GSM::ready()
     return ready;
 }
 
-void GSM::setTimeout(unsigned long timeout)
-{
-    _timeout = timeout;
-}
-
+/*
 unsigned long GSM::getTime() //UTC
 {
     String response;
@@ -238,6 +191,7 @@ unsigned long GSM::getTime() //UTC
     return 0;
 }
 
+
 unsigned long GSM::getLocalTime()
 {
     String response;
@@ -264,7 +218,7 @@ bool GSM::setLocalTime(time_t time, uint8_t quarters_from_utc){ //time is UTC
                 (now->tm_year + 1900) % 100, now->tm_mon + 1, now->tm_mday, now->tm_hour, now->tm_min, now->tm_sec % 60, quarters_from_utc);
     return MODEM.waitForResponse() == 1;
 }
-
+*/
 void GSM::lowPowerMode()
 {
     MODEM.lowPowerMode();
@@ -284,7 +238,7 @@ int8_t GSM::getSignalQuality(unsigned long timeout)
 {
     MODEM.send(F("AT+CSQ"));
     String response;
-    uint8_t result = MODEM.waitForResponse(timeout, &response);
+    uint8_t result = MODEM.waitForResponse(timeout, response);
     if (result != 1) return 99;
     else{
         return 2*(atoi(response.c_str() + 6)-2) - 109; //result in dBm

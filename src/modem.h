@@ -57,6 +57,9 @@ static const char GSM_CMS_ERROR[] PROGMEM = "+CMS ERROR";
 static const char CLOCK_FORMAT[] PROGMEM = "+CCLK: \"%y/%m/%d,%H:%M:%S\"";
 static const char PROMPT[] PROGMEM = "\r\n>";
 
+typedef const __FlashStringHelper* GsmConstStr;
+#define GFP(x) (reinterpret_cast<GsmConstStr>(x))
+#define GF(x) F(x)
 
 class GSM_Socket;
 class GPRS;
@@ -84,29 +87,25 @@ public:
     uint16_t write(uint8_t c);
     uint16_t write(const uint8_t* buf, uint16_t len);
     void flush();
-    void send(const char* command);
     void send(__FlashStringHelper* command);
-    void send(const String& command)
-    {
-        send(command.c_str());
-    }
     void sendf(const char* fmt, ...);
-
-
-    int waitForResponse(unsigned long timeout = 100L, String* responseDataStorage = NULL);
+    int8_t waitForResponse(uint32_t timeout = 1000L,
+                                   GsmConstStr r1 = GFP(GSM_OK),
+                                   GsmConstStr r2 = GFP(GSM_ERROR),
+                                   #ifdef GSM_DEBUG
+                                   GsmConstStr r3 = GFP(GSM_CME_ERROR),
+                                   GsmConstStr r4 = GFP(GSM_CMS_ERROR),
+                                   #else
+                                   GsmConstStr r3 = NULL,
+                                   GsmConstStr r4 = NULL,
+                                   #endif
+                                   GsmConstStr r5 = NULL)
     void poll();
-    void checkUrc();
-    uint8_t ready();
     void setBaudRate(unsigned long baud);
     void removeUrcHandler(ModemUrcHandler* handler);
     void addUrcHandler(ModemUrcHandler* handler);
-    bool turnEcho(bool on);    
     bool streamSkipUntil(const char& c, String* save = NULL, const uint32_t timeout_ms = 10000L);
     int16_t streamGetIntBefore(const char& lastChar);
-    inline void setResponseDataStorage(String* dest)
-    {
-        _responseDataStorage = dest;
-    }
 
 private:
     Uart* _uart;
@@ -116,7 +115,6 @@ private:
     bool _init;
     uint16_t _chunkLen;
     uint8_t _sock; //socket that will receive the chunk
-    void beginSend();
     #define MAX_SOCKETS 3
     GSM_Socket* _sockets[MAX_SOCKETS] = {NULL};
     uint8_t _initSocks;
@@ -127,16 +125,7 @@ private:
         URC_RECV_SOCK_CHUNK
     } _urcState;
 
-    enum
-    {
-        AT_IDLE,
-        AT_RECV_RESP
-    } _atCommandState;
-
-    uint8_t _ready;
-    bool _sent;
     String _buffer;
-    String* _responseDataStorage;
     #define MAX_URC_HANDLERS 1
     ModemUrcHandler* _urcHandlers[MAX_URC_HANDLERS] = {NULL};
 };
