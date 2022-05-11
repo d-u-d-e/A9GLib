@@ -256,15 +256,16 @@ void ModemClass::poll()
     while(_uart->available()){
         char c = _uart->read();
         _buffer += c;
+        //DBG("#DEBUG BUFFER#", _buffer);
         //DBG("#DEBUG CHAR#", c);
         switch(_atCommandState){
             default:
             case AT_IDLE:{
-                if (_sent && _buffer.startsWith("AT") && _buffer.endsWith("\r\n")){ //we use _sent check in case some URC contains the AT string!
-                    _buffer = "";
+                if (_sent && (_buffer.startsWith("AT") || _buffer.startsWith("\r\nAT"))
+                            && _buffer.endsWith("\r\n")){ //we use _sent check in case some URC contains the AT string!
                     _atCommandState = AT_RECV_RESP;
-                    //it is guaranteed that modem will never respond with an URC after he echoes the AT command
-                    DBG("#DEBUG# command sent: \"", _buffer.substring(0, _buffer.length() - 2), "\"");
+                    _buffer.trim();
+                    DBG("#DEBUG# command sent: \"", _buffer, "\"");
                     _buffer = "";
                     _sent = false;
                     break;
@@ -366,11 +367,13 @@ void ModemClass::checkUrc()
         _lastResponseOrUrcMillis = millis();
         #ifdef GSM_DEBUG
         //can get URC not starting with \r\n+ but only with +
-        if (_buffer.startsWith("\r\n+") || _buffer.startsWith("+")){
+        if (_buffer.startsWith("+") || _buffer.startsWith("\r\n+")){
+            //DBG("#DEBUG# sent: ", _sent);
             _buffer.trim();
             DBG("#DEBUG# unhandled URC received: \"", _buffer, "\"");
         }
         else {
+           // DBG("#DEBUG# sent: ", _sent);
            _buffer.trim();
            DBG("#DEBUG# unhandled data: \"", _buffer, "\"");
         }
